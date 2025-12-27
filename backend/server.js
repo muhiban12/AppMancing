@@ -4,6 +4,11 @@ const fastify = require('fastify')({ logger: true });
 // Register CORS agar bisa diakses browser/frontend nanti
 fastify.register(require('@fastify/cors'), { origin: "*" });
 
+// Daftarkan JWT (Gunakan secret dari .env)
+fastify.register(require('@fastify/jwt'), {
+  secret: process.env.JWT_SECRET || 'supersecret'
+});
+
 // Panggil koneksi database
 const pool = require('./src/config/db');
 
@@ -24,6 +29,8 @@ fastify.get('/cek-koneksi', async (request, reply) => {
     });
   }
 });
+// Daftarkan Route Auth
+fastify.register(require('./src/routes/authRoutes'), { prefix: '/api/auth' });
 
 // Menjalankan server
 const start = async () => {
