@@ -2,11 +2,9 @@ const pool = require('../config/db');
 
 const getAllPonds = async (request, reply) => {
   try {
-    // Mengambil semua data dari tabel kolam_pancing
     const [rows] = await pool.execute('SELECT * FROM spots');
     return reply.send({
       status: 'Success',
-      message: 'Daftar kolam pancing berhasil diambil',
       data: rows
     });
   } catch (error) {
@@ -15,22 +13,43 @@ const getAllPonds = async (request, reply) => {
 };
 
 const createPond = async (request, reply) => {
-  const { nama_kolam, alamat, deskripsi, harga_tiket, latitude, longitude } = request.body;
-  const ownerId = request.user.id; // User yang sedang login menjadi pemiliknya
+  const { 
+    nama_spot, deskripsi, harga_per_jam, alamat, 
+    latitude, longitude, total_kursi, jam_buka, jam_tutup,
+    fasilitas_ids // Contoh: [1, 2, 4]
+  } = request.body;
+  
+  const ownerId = request.user.id; 
+  const connection = await pool.getConnection(); // Gunakan connection untuk transaksi
 
   try {
-    const [result] = await pool.execute(
-      'INSERT INTO kolam_pancing (nama_kolam, alamat, deskripsi, harga_tiket, latitude, longitude, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [nama_kolam, alamat, deskripsi, harga_tiket, latitude, longitude, ownerId]
+    await connection.beginTransaction();
+
+    // 1. Simpan data spot
+    const [result] = await connection.execute(
+      'INSERT INTO spots (owner_id, nama_spot, deskripsi, harga_per_jam, alamat, latitude, longitude, total_kursi, jam_buka, jam_tutup) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [ownerId, nama_spot, deskripsi, harga_per_jam, alamat, latitude, longitude, total_kursi, jam_buka, jam_tutup]
     );
 
-    return reply.code(201).send({
-      status: 'Success',
-      message: 'Spot pancing berhasil ditambahkan!',
-      pondId: result.insertId
-    });
+    const spotId = result.insertId;
+
+    // 2. Simpan fasilitas jika ada
+    if (fasilitas_ids && fasilitas_ids.length > 0) {
+      const values = fasilitas_ids.map(fId => [spotId, fId]);
+      await connection.query(
+        'INSERT INTO spot_facilities (spot_id, fasilitas_id) VALUES ?',
+        [values]
+      );
+    }
+
+    await connection.commit();
+    return reply.code(201).send({ status: 'Success', message: 'Spot dan fasilitas berhasil disimpan!' });
+
   } catch (error) {
+    await connection.rollback();
     return reply.code(500).send({ error: error.message });
+  } finally {
+    connection.release();
   }
 };
 
