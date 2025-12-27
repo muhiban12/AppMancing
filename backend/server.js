@@ -31,6 +31,7 @@ fastify.get('/cek-koneksi', async (request, reply) => {
 });
 // Daftarkan Route Auth
 fastify.register(require('./src/routes/authRoutes'), { prefix: '/api/auth' });
+fastify.register(require('./src/routes/pondRoutes'), { prefix: '/api/ponds' });
 
 // Menjalankan server
 const start = async () => {
