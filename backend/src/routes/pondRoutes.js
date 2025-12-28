@@ -8,7 +8,18 @@ const {
   getAdminPonds,
   createWildSpot,
   getAllMapSpots,
-  getSpotDetail
+  getSpotDetail,
+  getSpotSeats,
+  createBooking,
+  getUserBookings,
+  getOwnerWallet,
+  withdrawFunds,
+  getOwnerTransactions,
+  createStrikeFeed,
+  getStrikeFeeds,
+  createReview,
+  getSpotReviews,
+  getLeaderboard
 } = require('../controllers/pondController');
 
 const { authenticate, isOwner, isAdmin } = require('../middleware/authMiddleware');
@@ -31,6 +42,27 @@ async function pondRoutes(fastify) {
   // Tambahkan getAllMapSpots di require controller
   fastify.get('/map-all', getAllMapSpots);
   fastify.get('/detail/:id', getSpotDetail);
+
+  // booking
+  fastify.post('/booking', { preHandler: [authenticate] }, createBooking);
+  fastify.get('/my-bookings', { preHandler: [authenticate] }, getUserBookings);
+
+  // keuangan
+  // Route untuk dompet owner
+  fastify.get('/wallet', { preHandler: [authenticate] }, getOwnerWallet);
+  fastify.post('/withdraw', { preHandler: [authenticate] }, withdrawFunds);
+  fastify.get('/owner/transactions', { preHandler: [authenticate] }, getOwnerTransactions);
+
+  // strike feeds
+  fastify.post('/feeds', { preHandler: [authenticate] }, createStrikeFeed);
+  fastify.get('/feeds', getStrikeFeeds); // Bisa dilihat semua orang
+
+  // reviews
+  fastify.post('/reviews', { preHandler: [authenticate] }, createReview);
+  fastify.get('/reviews', getSpotReviews);
+
+  // leaderboard
+  fastify.get('/leaderboard', getLeaderboard);
 }
 
 module.exports = pondRoutes;

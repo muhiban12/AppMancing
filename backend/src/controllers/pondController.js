@@ -241,5 +241,290 @@ const getSpotDetail = async (request, reply) => {
   }
 };
 
+const createBooking = async (request, reply) => {
+  const { seat_id, payment_channel_id, start_time, duration, total_harga } = request.body;
+  const userId = request.user.id;
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // 1. Ambil info kursi dan ID Owner-nya
+    const [seatInfo] = await connection.execute(`
+      SELECT s.status, p.owner_id 
+      FROM seats s 
+      JOIN spots p ON s.spot_id = p.id 
+      WHERE s.id = ? FOR UPDATE`, [seat_id]);
+    
+    if (seatInfo.length === 0 || seatInfo[0].status !== 'Available') {
+      await connection.rollback();
+      return reply.code(400).send({ message: 'Kursi tidak tersedia.' });
+    }
+
+    const ownerId = seatInfo[0].owner_id;
+
+    // 2. Masukkan data ke tabel bookings
+    const booking_token = 'BKG-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+    await connection.execute(
+      'INSERT INTO bookings (user_id, seat_id, payment_channel_id, start_time, duration, total_harga, booking_token, status_pembayaran) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [userId, seat_id, payment_channel_id, start_time, duration, total_harga, booking_token, 'Paid'] // Langsung 'Paid'
+    );
+
+    // 3. Update status kursi jadi 'Booked'
+    await connection.execute('UPDATE seats SET status = "Booked" WHERE id = ?', [seat_id]);
+
+    // 4. Update Saldo Owner (Sesuai Tabel owner_wallets)
+    // Cek apakah owner sudah punya wallet, jika belum bisa dibuat otomatis (optional)
+    await connection.execute(`
+      UPDATE owner_wallets 
+      SET balance = balance + ?, total_earned = total_earned + ? 
+      WHERE owner_id = ?`, 
+      [total_harga, total_harga, ownerId]
+    );
+
+    await connection.commit();
+    return reply.code(201).send({ status: 'Success', message: 'Booking sukses & Saldo Owner bertambah!', booking_token });
+  } catch (error) {
+    await connection.rollback();
+    return reply.code(500).send({ error: error.message });
+  } finally {
+    connection.release();
+  }
+};
+
+const getUserBookings = async (request, reply) => {
+  const userId = request.user.id;
+
+  try {
+    const query = `
+      SELECT b.*, s.nomor_kursi, p.nama_spot, p.alamat 
+      FROM bookings b
+      JOIN seats s ON b.seat_id = s.id
+      JOIN spots p ON s.spot_id = p.id
+      WHERE b.user_id = ?
+      ORDER BY b.created_at DESC
+    `;
+    const [rows] = await pool.execute(query, [userId]);
+
+    return reply.send({
+      status: 'Success',
+      data: rows
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+const getOwnerWallet = async (request, reply) => {
+  const ownerId = request.user.id;
+
+  try {
+    const [wallet] = await pool.execute(
+      'SELECT balance, total_earned FROM owner_wallets WHERE owner_id = ?',
+      [ownerId]
+    );
+
+    if (wallet.length === 0) {
+      return reply.send({ balance: 0, total_earned: 0 });
+    }
+
+    return reply.send({
+      status: 'Success',
+      data: wallet[0]
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+const withdrawFunds = async (request, reply) => {
+  const { amount, bank_tujuan, nomor_rekening } = request.body;
+  const ownerId = request.user.id;
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // 1. Cek apakah saldo cukup
+    const [wallet] = await connection.execute(
+      'SELECT balance FROM owner_wallets WHERE owner_id = ? FOR UPDATE',
+      [ownerId]
+    );
+
+    if (wallet.length === 0 || wallet[0].balance < amount) {
+      await connection.rollback();
+      return reply.code(400).send({ message: 'Saldo tidak mencukupi.' });
+    }
+
+    // 2. Kurangi saldo Owner
+    await connection.execute(
+      'UPDATE owner_wallets SET balance = balance - ? WHERE owner_id = ?',
+      [amount, ownerId]
+    );
+
+    // 3. Catat ke payout_logs (status langsung Success sesuai permintaanmu)
+    await connection.execute(
+      'INSERT INTO payout_logs (owner_id, amount, bank_tujuan, nomor_rekening, status) VALUES (?, ?, ?, ?, ?)',
+      [ownerId, amount, bank_tujuan, nomor_rekening, 'Success']
+    );
+
+    await connection.commit();
+    return reply.send({ status: 'Success', message: 'Penarikan dana berhasil diproses!' });
+  } catch (error) {
+    await connection.rollback();
+    return reply.code(500).send({ error: error.message });
+  } finally {
+    connection.release();
+  }
+};
+
+const getOwnerTransactions = async (request, reply) => {
+  const ownerId = request.user.id;
+
+  try {
+    const query = `
+      SELECT b.id, b.total_harga, b.created_at, b.booking_token, u.nama_lengkap as pembeli
+      FROM bookings b
+      JOIN seats s ON b.seat_id = s.id
+      JOIN spots p ON s.spot_id = p.id
+      JOIN users u ON b.user_id = u.id
+      WHERE p.owner_id = ?
+      ORDER BY b.created_at DESC
+    `;
+    const [rows] = await pool.execute(query, [ownerId]);
+    return reply.send({ status: 'Success', data: rows });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+// bagian strike feeds
+const createStrikeFeed = async (request, reply) => {
+  const { wild_spot_id, nama_ikan, berat, panjang, caption, foto_ikan } = request.body; 
+  const userId = request.user.id;
+
+  try {
+    const query = `
+      INSERT INTO strike_feeds (user_id, wild_spot_id, nama_ikan, berat, panjang, caption, foto_ikan) 
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+    await pool.execute(query, [userId, wild_spot_id, nama_ikan, berat, panjang, caption, foto_ikan]);
+
+    return reply.code(201).send({ 
+      status: 'Success', 
+      message: 'Postingan strike liar berhasil diunggah!' 
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+const getStrikeFeeds = async (request, reply) => {
+  try {
+    const query = `
+      SELECT f.*, u.nama_lengkap, w.nama_lokasi 
+      FROM strike_feeds f
+      JOIN users u ON f.user_id = u.id
+      JOIN wild_spots w ON f.wild_spot_id = w.id
+      ORDER BY f.created_at DESC
+    `;
+    const [rows] = await pool.execute(query);
+    return reply.send({ status: 'Success', data: rows });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+// reviews
+const createReview = async (request, reply) => {
+  const { spot_id, wild_spot_id, rating, ulasan, foto_ulasan } = request.body;
+  const userId = request.user.id;
+
+  try {
+    const query = `
+      INSERT INTO reviews (user_id, spot_id, wild_spot_id, rating, ulasan, foto_ulasan) 
+      VALUES (?, ?, ?, ?, ?, ?)
+    `;
+    await pool.execute(query, [
+      userId, 
+      spot_id || null, 
+      wild_spot_id || null, 
+      rating, 
+      ulasan, 
+      foto_ulasan
+    ]);
+
+    return reply.code(201).send({ 
+      status: 'Success', 
+      message: 'Terima kasih! Ulasan kamu telah dipublikasikan.' 
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+const getSpotReviews = async (request, reply) => {
+  const { spot_id, type } = request.query; // type: 'komersial' atau 'liar'
+
+  try {
+    let query = `
+      SELECT r.*, u.nama_lengkap, u.foto_profil 
+      FROM reviews r
+      JOIN users u ON r.user_id = u.id
+      WHERE 
+    `;
+    
+    if (type === 'komersial') {
+      query += `r.spot_id = ?`;
+    } else {
+      query += `r.wild_spot_id = ?`;
+    }
+    
+    query += ` ORDER BY r.created_at DESC`;
+
+    const [rows] = await pool.execute(query, [spot_id]);
+    return reply.send({ status: 'Success', data: rows });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+// leaderboard
+const getLeaderboard = async (request, reply) => {
+  const { criteria } = request.query; // 'berat' atau 'panjang'
+
+  try {
+    // Kita urutkan berdasarkan kriteria yang dipilih user di UI
+    const orderBy = criteria === 'panjang' ? 'f.panjang' : 'f.berat';
+    
+    const query = `
+      SELECT 
+        u.nama_lengkap, 
+        u.foto_profil, 
+        f.nama_ikan, 
+        f.berat, 
+        f.panjang, 
+        w.nama_lokasi as lokasi_spot,
+        f.created_at
+      FROM strike_feeds f
+      JOIN users u ON f.user_id = u.id
+      JOIN wild_spots w ON f.wild_spot_id = w.id
+      ORDER BY ${orderBy} DESC
+      LIMIT 10
+    `;
+
+    const [rows] = await pool.execute(query);
+    return reply.send({
+      status: 'Success',
+      data: rows
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
 // Update exports paling bawah
-module.exports = { getAllPonds, createPond, updatePond, deletePond, approveSpot, getAdminPonds, createWildSpot, getAllMapSpots, getSpotDetail, getSpotSeats};
+module.exports = { getAllPonds, createPond, updatePond, deletePond, approveSpot,
+   getAdminPonds, createWildSpot, getAllMapSpots, getSpotDetail, getSpotSeats, createBooking,
+   getUserBookings, getOwnerWallet, withdrawFunds, getOwnerTransactions, createStrikeFeed, getStrikeFeeds,
+   createReview, getSpotReviews, getLeaderboard};
