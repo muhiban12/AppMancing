@@ -179,27 +179,42 @@ const createWildSpot = async (request, reply) => {
 };
 
 const getAllMapSpots = async (request, reply) => {
-  const { search } = request.query; // Menangkap apa yang diketik user di UI
-  let query = `
-    SELECT id, nama_spot AS nama, latitude, longitude, 'komersil' AS tipe, status FROM spots WHERE status = 'approved'
-    UNION
-    SELECT id, nama_lokasi AS nama, latitude, longitude, 'liar' AS tipe, 'approved' AS status FROM wild_spots
+  // Ambil koordinat GPS user dan radius maksimal dari Frontend
+  const { user_lat, user_lon, radius_km = 10 } = request.query;
+
+  if (!user_lat || !user_lon) {
+    return reply.code(400).send({ message: 'Koordinat lokasi kamu diperlukan untuk melihat spot terdekat.' });
+  }
+
+  // Parameter untuk rumus Haversine (Latitude, Longitude, Latitude)
+  const params = [user_lat, user_lon, user_lat, user_lat, user_lon, user_lat];
+
+  // Query UNION untuk mencari spot komersil & liar yang masuk radius
+  const query = `
+    SELECT * FROM (
+      SELECT id, nama_spot AS nama, latitude, longitude, 'Komersial' AS tipe, foto_utama,
+      (6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) AS jarak
+      FROM spots WHERE status = 'approved'
+      
+      UNION
+      
+      SELECT id, nama_lokasi AS nama, latitude, longitude, 'Alam Liar' AS tipe, foto_carousel AS foto_utama,
+      (6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) AS jarak
+      FROM wild_spots
+    ) AS gabungan
+    WHERE jarak <= ? 
+    ORDER BY jarak ASC
   `;
 
-  try {
-    const [rows] = await pool.execute(query);
-    
-    // Logika Filter Sederhana di Backend
-    let filteredData = rows;
-    if (search) {
-      filteredData = rows.filter(spot => 
-        spot.nama.toLowerCase().includes(search.toLowerCase())
-      );
-    }
+  // Tambahkan radius_km ke dalam parameter query
+  params.push(radius_km);
 
+  try {
+    const [rows] = await pool.execute(query, params);
     return reply.send({
       status: 'Success',
-      data: filteredData
+      total_found: rows.length,
+      data: rows
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -315,6 +330,21 @@ const getUserBookings = async (request, reply) => {
   }
 };
 
+// Contoh logika yang dijalankan setiap beberapa menit
+const updateExpiredBookings = async () => {
+  const query = `
+    UPDATE seats 
+    SET status = 'Available' 
+    WHERE id IN (
+      SELECT seat_id FROM bookings 
+      WHERE (start_time + INTERVAL duration HOUR) < NOW() 
+      AND status_pembayaran = 'Paid'
+    )
+  `;
+  await pool.execute(query);
+};
+
+// keuangan
 const getOwnerWallet = async (request, reply) => {
   const ownerId = request.user.id;
 
@@ -523,8 +553,90 @@ const getLeaderboard = async (request, reply) => {
   }
 };
 
+// Admin menghapus strike feed yang melanggar aturan
+const adminDeleteStrikeFeed = async (request, reply) => {
+  const { id } = request.params;
+  // Pastikan request.user.role === 'Admin' (dari JWT)
+  
+  try {
+    await pool.execute('DELETE FROM strike_feeds WHERE id = ?', [id]);
+    return reply.send({ status: 'Success', message: 'Postingan berhasil dihapus oleh Admin.' });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+// Admin menghapus ulasan yang tidak pantas
+const adminDeleteReview = async (request, reply) => {
+  const { id } = request.params;
+  
+  try {
+    await pool.execute('DELETE FROM reviews WHERE id = ?', [id]);
+    return reply.send({ status: 'Success', message: 'Ulasan berhasil dihapus oleh Admin.' });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+// event
+const registerEvent = async (request, reply) => {
+  const { event_id, payment_channel_id } = request.body;
+  const user_id = request.user.id;
+
+  try {
+    const [[event]] = await pool.execute('SELECT nama_event, maks_peserta FROM events WHERE id = ?', [event_id]);
+    const [[current]] = await pool.execute('SELECT COUNT(*) as total FROM event_registrations WHERE event_id = ?', [event_id]);
+
+    if (current.total >= event.maks_peserta) {
+      return reply.code(400).send({ message: 'Maaf, kuota lomba sudah penuh!' });
+    }
+
+    const ticket_code = `EVT-${Date.now()}`;
+    await pool.execute(
+      `INSERT INTO event_registrations (user_id, event_id, payment_channel_id, status_pembayaran, ticket_code) 
+       VALUES (?, ?, ?, 'Paid', ?)`,
+      [user_id, event_id, payment_channel_id, ticket_code]
+    );
+
+    // --- TAMBAHKAN KODE NOTIFIKASI DI SINI ---
+    await pool.execute(
+      'INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)',
+      [user_id, 'Pendaftaran Berhasil', `Selamat! Kamu terdaftar di event ${event.nama_event}. Kode Tiket: ${ticket_code}`]
+    );
+
+    return reply.send({ status: 'Success', ticket_code });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+// Fungsi untuk mengambil daftar notifikasi milik user
+const getNotifications = async (request, reply) => {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC', 
+      [request.user.id]
+    );
+    return reply.send({ status: 'Success', data: rows });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+// Fungsi untuk menandai notifikasi sudah dibaca (opsional)
+const markNotificationRead = async (request, reply) => {
+  const { id } = request.params;
+  try {
+    await pool.execute('UPDATE notifications SET is_read = 1 WHERE id = ?', [id]);
+    return reply.send({ status: 'Success', message: 'Notifikasi dibaca' });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
 // Update exports paling bawah
 module.exports = { getAllPonds, createPond, updatePond, deletePond, approveSpot,
    getAdminPonds, createWildSpot, getAllMapSpots, getSpotDetail, getSpotSeats, createBooking,
    getUserBookings, getOwnerWallet, withdrawFunds, getOwnerTransactions, createStrikeFeed, getStrikeFeeds,
-   createReview, getSpotReviews, getLeaderboard};
+   createReview, getSpotReviews, getLeaderboard, adminDeleteStrikeFeed, adminDeleteReview, registerEvent,
+   updateExpiredBookings, getNotifications, markNotificationRead};

@@ -1,68 +1,47 @@
-// Tambahkan approveSpot dan getAdminPonds di sini
 const { 
-  getAllPonds, 
-  createPond, 
-  updatePond, 
-  deletePond, 
-  approveSpot, 
-  getAdminPonds,
-  createWildSpot,
-  getAllMapSpots,
-  getSpotDetail,
-  getSpotSeats,
-  createBooking,
-  getUserBookings,
-  getOwnerWallet,
-  withdrawFunds,
-  getOwnerTransactions,
-  createStrikeFeed,
-  getStrikeFeeds,
-  createReview,
-  getSpotReviews,
-  getLeaderboard
+  // Import semua fungsi dari controller kamu
+  getAllMapSpots, getSpotDetail, getSpotSeats, 
+  createBooking, getUserBookings, 
+  registerEvent, getOwnerWallet, withdrawFunds,
+  createStrikeFeed, getStrikeFeeds, getLeaderboard,
+  adminDeleteStrikeFeed, adminDeleteReview,
+  updateExpiredBookings, getNotifications, markNotificationRead
 } = require('../controllers/pondController');
 
-const { authenticate, isOwner, isAdmin } = require('../middleware/authMiddleware');
+const { authenticate } = require('../middleware/auth');
 
-// Tambahkan route ini di dalam function pondRoutes
-
-async function pondRoutes(fastify) {
-  fastify.get('/', getAllPonds);
-  fastify.get('/:spot_id/seats', getSpotSeats);
-  fastify.post('/', { preHandler: [authenticate, isOwner] }, createPond);
-  fastify.put('/:id', { preHandler: [authenticate, isOwner] }, updatePond);
-  fastify.delete('/:id', { preHandler: [authenticate, isOwner] }, deletePond);
+async function pondRoutes(fastify, options) {
   
-  // Route Admin
-  fastify.get('/admin/all', { preHandler: [authenticate, isAdmin] }, getAdminPonds);
-  fastify.patch('/:id/status', { preHandler: [authenticate, isAdmin] }, approveSpot);
-
-  // untuk spots liar
-  fastify.post('/wild', { preHandler: [authenticate, isAdmin] }, createWildSpot);
-  // Tambahkan getAllMapSpots di require controller
+  // --- PETA & DETAIL (UI MAPS) ---
   fastify.get('/map-all', getAllMapSpots);
   fastify.get('/detail/:id', getSpotDetail);
+  fastify.get('/seats/:spot_id', getSpotSeats);
 
-  // booking
-  fastify.post('/booking', { preHandler: [authenticate] }, createBooking);
+  // --- BOOKING & EVENT (TRANSAKSI) ---
+  fastify.post('/bookings', { preHandler: [authenticate] }, createBooking);
   fastify.get('/my-bookings', { preHandler: [authenticate] }, getUserBookings);
+  fastify.post('/events/register', { preHandler: [authenticate] }, registerEvent);
 
-  // keuangan
-  // Route untuk dompet owner
+  // --- KOMUNITAS & LEADERBOARD ---
+  fastify.get('/feeds', getStrikeFeeds);
+  fastify.post('/feeds', { preHandler: [authenticate] }, createStrikeFeed);
+  fastify.get('/leaderboard', getLeaderboard);
+
+  // --- KEUANGAN OWNER ---
   fastify.get('/wallet', { preHandler: [authenticate] }, getOwnerWallet);
   fastify.post('/withdraw', { preHandler: [authenticate] }, withdrawFunds);
-  fastify.get('/owner/transactions', { preHandler: [authenticate] }, getOwnerTransactions);
 
-  // strike feeds
-  fastify.post('/feeds', { preHandler: [authenticate] }, createStrikeFeed);
-  fastify.get('/feeds', getStrikeFeeds); // Bisa dilihat semua orang
+  // --- ADMIN & SISTEM ---
+  // Route untuk bersih-bersih kursi kadaluwarsa secara manual
+  fastify.post('/system/refresh-seats', updateExpiredBookings); 
+  
+  // Hapus postingan/ulasan bermasalah
+  fastify.delete('/admin/feed/:id', { preHandler: [authenticate] }, adminDeleteStrikeFeed);
+  fastify.delete('/admin/review/:id', { preHandler: [authenticate] }, adminDeleteReview);
 
-  // reviews
-  fastify.post('/reviews', { preHandler: [authenticate] }, createReview);
-  fastify.get('/reviews', getSpotReviews);
-
-  // leaderboard
-  fastify.get('/leaderboard', getLeaderboard);
+  // untuk notifikasi
+  fastify.get('/notifications', { preHandler: [authenticate] }, getNotifications);
+  fastify.patch('/notifications/:id/read', { preHandler: [authenticate] }, markNotificationRead);
 }
 
 module.exports = pondRoutes;

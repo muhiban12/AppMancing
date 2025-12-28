@@ -43,4 +43,13 @@ const start = async () => {
     process.exit(1);
   }
 };
+
+// Contoh di server.js
+const { updateExpiredBookings } = require('./controllers/pondController');
+
+// Jalankan pengecekan setiap 5 menit
+setInterval(async () => {
+  await updateExpiredBookings();
+  console.log('Status kursi telah diperbarui otomatis.');
+}, 5 * 60 * 1000);
 start();
