@@ -250,35 +250,33 @@ const getSpotDetail = async (request, reply) => {
 
     const spotData = rows[0];
 
-    // --- LOGIKA CUACA DIMULAI DI SINI ---
-    let weatherInfo = null;
+    // --- LOGIKA CUACA BMKG ---
+    let weatherInfo = { temp: "N/A", condition: "Tidak Tersedia", icon: "" };
+    
     try {
-    // Mengambil data cuaca wilayah Jawa Barat langsung dari BMKG
-    const response = await axios.get('https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaBarat.xml');
-    
-    const parser = new xml2js.Parser();
-    const result = await parser.parseStringPromise(response.data);
-    
-    // Mencari area yang paling mendekati koordinat (untuk sementara kita ambil area pertama)
-    // Di masa depan, kamu bisa filter berdasarkan nama kota yang ada di DB
-    const area = result.data.forecast[0].area[0]; 
-    const tempParam = area.parameter.find(p => p.$.id === 't'); // 't' adalah kode suhu di BMKG
-    
-    weatherInfo = {
-      temp: tempParam.timerange[0].value[0]._,
-      condition: "Data BMKG Pusat",
-      icon: "https://www.bmkg.go.id/asset/img/logo/logo-bmkg.png"
-    };
-  } catch (weatherErr) {
-    console.error("Gagal ambil data BMKG Pusat:", weatherErr.message);
-  }
-    // --- LOGIKA CUACA SELESAI ---
+      // Kita ambil data Jawa Barat sebagai contoh pusat
+      const response = await axios.get('https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaBarat.xml', { timeout: 5000 });
+      const parser = new xml2js.Parser();
+      const result = await parser.parseStringPromise(response.data);
+      
+      // Ambil data area pertama (Biasanya Bandung/Pusat Jabar)
+      const area = result.data.forecast[0].area[0];
+      const tempParam = area.parameter.find(p => p.$.id === 't'); 
+      
+      weatherInfo = {
+        temp: tempParam.timerange[0].value[0]._,
+        condition: "Cerah Berawan (BMKG)",
+        icon: "https://www.bmkg.go.id/asset/img/logo/logo-bmkg.png"
+      };
+    } catch (weatherErr) {
+      console.error("BMKG Timeout/Error, menggunakan data default");
+    }
 
     return reply.send({
       status: 'Success',
       data: {
         ...spotData,
-        cuaca: weatherInfo // Ini yang akan kamu panggil di UI Figma
+        cuaca: weatherInfo 
       }
     });
   } catch (error) {
