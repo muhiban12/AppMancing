@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const axios = require('axios');
 
 const getAllPonds = async (request, reply) => {
   try {
@@ -223,14 +224,13 @@ const getAllMapSpots = async (request, reply) => {
 
 const getSpotDetail = async (request, reply) => {
   const { id } = request.params;
-  const { tipe } = request.query; // Kita kirim tipe ('komersil' atau 'liar') dari frontend
+  const { tipe } = request.query;
 
   try {
     let query = '';
     if (tipe === 'liar') {
       query = 'SELECT * FROM wild_spots WHERE id = ?';
     } else {
-      // Untuk komersil, kita sekalian ambil data fasilitasnya menggunakan JOIN
       query = `
         SELECT s.*, GROUP_CONCAT(mf.nama_fasilitas) as fasilitas 
         FROM spots s
@@ -247,9 +247,34 @@ const getSpotDetail = async (request, reply) => {
       return reply.code(404).send({ message: 'Detail spot tidak ditemukan' });
     }
 
+    const spotData = rows[0];
+
+    // --- LOGIKA CUACA DIMULAI DI SINI ---
+    let weatherInfo = null;
+    try {
+      // Ambil API KEY dari OpenWeatherMap (Gratis)
+      const apiKey = 'MASUKKAN_API_KEY_KAMU_DISINI'; 
+      const weatherUrl = `https://api.openweathermap.org/data/2.5/weather?lat=${spotData.latitude}&lon=${spotData.longitude}&appid=${apiKey}&units=metric&lang=id`;
+      
+      const response = await axios.get(weatherUrl);
+      
+      weatherInfo = {
+        temp: response.data.main.temp,
+        condition: response.data.weather[0].description,
+        icon: `https://openweathermap.org/img/wn/${response.data.weather[0].icon}@2x.png`
+      };
+    } catch (weatherErr) {
+      console.error("Gagal fetch cuaca:", weatherErr.message);
+      // Biarkan null jika gagal, agar aplikasi tidak crash
+    }
+    // --- LOGIKA CUACA SELESAI ---
+
     return reply.send({
       status: 'Success',
-      data: rows[0]
+      data: {
+        ...spotData,
+        cuaca: weatherInfo // Ini yang akan kamu panggil di UI Figma
+      }
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
