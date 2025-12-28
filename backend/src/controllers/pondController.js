@@ -53,5 +53,60 @@ const createPond = async (request, reply) => {
   }
 };
 
-// Update ekspornya
-module.exports = { getAllPonds, createPond };
+const updatePond = async (request, reply) => {
+  const { id } = request.params; // Mengambil ID spot dari URL
+  const { nama_spot, deskripsi, harga_per_jam, alamat, total_kursi, jam_buka, jam_tutup } = request.body;
+  const ownerId = request.user.id; // ID user yang sedang login
+
+  try {
+    // 1. Cek dulu, apakah spot ini memang milik user yang login?
+    const [spot] = await pool.execute('SELECT owner_id FROM spots WHERE id = ?', [id]);
+
+    if (spot.length === 0) {
+      return reply.code(404).send({ message: 'Spot tidak ditemukan' });
+    }
+
+    if (spot[0].owner_id !== ownerId) {
+      return reply.code(403).send({ message: 'Kamu tidak berhak mengedit spot ini!' });
+    }
+
+    // 2. Jika aman, baru kita update datanya
+    await pool.execute(
+      'UPDATE spots SET nama_spot=?, deskripsi=?, harga_per_jam=?, alamat=?, total_kursi=?, jam_buka=?, jam_tutup=? WHERE id = ?',
+      [nama_spot, deskripsi, harga_per_jam, alamat, total_kursi, jam_buka, jam_tutup, id]
+    );
+
+    return reply.send({ status: 'Success', message: 'Data spot berhasil diperbarui!' });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+const deletePond = async (request, reply) => {
+  const { id } = request.params;
+  const ownerId = request.user.id;
+
+  try {
+    // 1. Cek kepemilikan spot
+    const [spot] = await pool.execute('SELECT owner_id FROM spots WHERE id = ?', [id]);
+
+    if (spot.length === 0) {
+      return reply.code(404).send({ message: 'Spot tidak ditemukan' });
+    }
+
+    // Hanya pemilik (Owner) atau Admin yang boleh hapus
+    if (spot[0].owner_id !== ownerId) {
+      return reply.code(403).send({ message: 'Akses ditolak! Kamu bukan pemilik spot ini.' });
+    }
+
+    // 2. Hapus data (relasi di spot_facilities akan otomatis terhapus karena ON DELETE CASCADE)
+    await pool.execute('DELETE FROM spots WHERE id = ?', [id]);
+
+    return reply.send({ status: 'Success', message: 'Spot pancing berhasil dihapus selamanya.' });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+// Update exports paling bawah
+module.exports = { getAllPonds, createPond, updatePond, deletePond };

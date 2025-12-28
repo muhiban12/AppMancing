@@ -1,12 +1,13 @@
-const { getAllPonds, createPond } = require('../controllers/pondController');
+const { getAllPonds, createPond, updatePond, deletePond } = require('../controllers/pondController');
 const { authenticate, isOwner } = require('../middleware/authMiddleware');
 
 async function pondRoutes(fastify) {
-  // Semua orang bisa melihat daftar kolam
   fastify.get('/', getAllPonds);
-
-  // Hanya Owner/Admin yang bisa menambah kolam
   fastify.post('/', { preHandler: [authenticate, isOwner] }, createPond);
+  fastify.put('/:id', { preHandler: [authenticate, isOwner] }, updatePond);
+  
+  // Tambahkan baris penghapusan ini:
+  fastify.delete('/:id', { preHandler: [authenticate, isOwner] }, deletePond);
 }
 
 module.exports = pondRoutes;
