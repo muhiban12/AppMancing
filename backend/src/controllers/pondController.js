@@ -2,7 +2,8 @@ const pool = require('../config/db');
 
 const getAllPonds = async (request, reply) => {
   try {
-    const [rows] = await pool.execute('SELECT * FROM spots');
+    // Ubah query agar hanya mengambil yang statusnya 'approved'
+    const [rows] = await pool.execute("SELECT * FROM spots WHERE status = 'approved'");
     return reply.send({
       status: 'Success',
       data: rows
@@ -11,6 +12,37 @@ const getAllPonds = async (request, reply) => {
     return reply.code(500).send({ error: error.message });
   }
 };
+
+const getAdminPonds = async (request, reply) => {
+  try {
+    const [rows] = await pool.execute("SELECT * FROM spots");
+    return reply.send({
+      status: 'Success',
+      data: rows
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+const getSpotSeats = async (request, reply) => {
+  const { spot_id } = request.params;
+
+  try {
+    const [rows] = await pool.execute(
+      "SELECT * FROM seats WHERE spot_id = ? AND status = 'Available'", 
+      [spot_id]
+    );
+    
+    return reply.send({
+      status: 'Success',
+      data: rows
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
 
 const createPond = async (request, reply) => {
   const { 
@@ -108,5 +140,106 @@ const deletePond = async (request, reply) => {
   }
 };
 
+// Fungsi untuk Admin mengubah status spot
+const approveSpot = async (request, reply) => {
+  const { id } = request.params;
+  const { status } = request.body; // 'approved' atau 'rejected'
+
+  try {
+    await pool.execute('UPDATE spots SET status = ? WHERE id = ?', [status, id]);
+    return reply.send({ status: 'Success', message: `Spot pancing kini berstatus: ${status}` });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+//bagian spots liar
+const createWildSpot = async (request, reply) => {
+  const { 
+    nama_lokasi, kabupaten_provinsi, deskripsi_spot, 
+    latitude, longitude, status_potensi 
+  } = request.body;
+  
+  const adminId = request.user.id; // Diambil dari token admin
+
+  try {
+    const [result] = await pool.execute(
+      'INSERT INTO wild_spots (admin_id, nama_lokasi, kabupaten_provinsi, deskripsi_spot, latitude, longitude, status_potensi) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [adminId, nama_lokasi, kabupaten_provinsi, deskripsi_spot, latitude, longitude, status_potensi]
+    );
+
+    return reply.code(201).send({
+      status: 'Success',
+      message: 'Spot liar berhasil ditambahkan oleh Admin!',
+      spotId: result.insertId
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+const getAllMapSpots = async (request, reply) => {
+  const { search } = request.query; // Menangkap apa yang diketik user di UI
+  let query = `
+    SELECT id, nama_spot AS nama, latitude, longitude, 'komersil' AS tipe, status FROM spots WHERE status = 'approved'
+    UNION
+    SELECT id, nama_lokasi AS nama, latitude, longitude, 'liar' AS tipe, 'approved' AS status FROM wild_spots
+  `;
+
+  try {
+    const [rows] = await pool.execute(query);
+    
+    // Logika Filter Sederhana di Backend
+    let filteredData = rows;
+    if (search) {
+      filteredData = rows.filter(spot => 
+        spot.nama.toLowerCase().includes(search.toLowerCase())
+      );
+    }
+
+    return reply.send({
+      status: 'Success',
+      data: filteredData
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+const getSpotDetail = async (request, reply) => {
+  const { id } = request.params;
+  const { tipe } = request.query; // Kita kirim tipe ('komersil' atau 'liar') dari frontend
+
+  try {
+    let query = '';
+    if (tipe === 'liar') {
+      query = 'SELECT * FROM wild_spots WHERE id = ?';
+    } else {
+      // Untuk komersil, kita sekalian ambil data fasilitasnya menggunakan JOIN
+      query = `
+        SELECT s.*, GROUP_CONCAT(mf.nama_fasilitas) as fasilitas 
+        FROM spots s
+        LEFT JOIN spot_facilities sf ON s.id = sf.spot_id
+        LEFT JOIN master_fasilitas mf ON sf.fasilitas_id = mf.id
+        WHERE s.id = ?
+        GROUP BY s.id
+      `;
+    }
+
+    const [rows] = await pool.execute(query, [id]);
+
+    if (rows.length === 0) {
+      return reply.code(404).send({ message: 'Detail spot tidak ditemukan' });
+    }
+
+    return reply.send({
+      status: 'Success',
+      data: rows[0]
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
 // Update exports paling bawah
-module.exports = { getAllPonds, createPond, updatePond, deletePond };
+module.exports = { getAllPonds, createPond, updatePond, deletePond, approveSpot, getAdminPonds, createWildSpot, getAllMapSpots, getSpotDetail, getSpotSeats};

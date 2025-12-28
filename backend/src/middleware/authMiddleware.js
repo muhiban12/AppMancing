@@ -31,4 +31,14 @@ const isOwner = async (request, reply) => {
   }
 };
 
-module.exports = { authenticate, isOwner };
+const isAdmin = async (request, reply) => {
+  const userId = request.user.id;
+  const [rows] = await pool.execute('SELECT role_id FROM user_roles WHERE user_id = ?', [userId]);
+  
+  const hasAccess = rows.some(r => r.role_id === 1); // Role ID 1 adalah Admin
+  if (!hasAccess) {
+    return reply.code(403).send({ message: 'Akses ditolak! Khusus Admin.' });
+  }
+};
+
+module.exports = { authenticate, isOwner, isAdmin };
