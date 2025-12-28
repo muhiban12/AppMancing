@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const axios = require('axios');
+const xml2js = require('xml2js');
 
 const getAllPonds = async (request, reply) => {
   try {
@@ -252,21 +252,25 @@ const getSpotDetail = async (request, reply) => {
     // --- LOGIKA CUACA DIMULAI DI SINI ---
     let weatherInfo = null;
     try {
-      // Ambil API KEY dari OpenWeatherMap (Gratis)
-      const apiKey = 'MASUKKAN_API_KEY_KAMU_DISINI'; 
-      const weatherUrl = `https://api.openweathermap.org/data/2.5/weather?lat=${spotData.latitude}&lon=${spotData.longitude}&appid=${apiKey}&units=metric&lang=id`;
-      
-      const response = await axios.get(weatherUrl);
-      
-      weatherInfo = {
-        temp: response.data.main.temp,
-        condition: response.data.weather[0].description,
-        icon: `https://openweathermap.org/img/wn/${response.data.weather[0].icon}@2x.png`
-      };
-    } catch (weatherErr) {
-      console.error("Gagal fetch cuaca:", weatherErr.message);
-      // Biarkan null jika gagal, agar aplikasi tidak crash
-    }
+    // Mengambil data cuaca wilayah Jawa Barat langsung dari BMKG
+    const response = await axios.get('https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaBarat.xml');
+    
+    const parser = new xml2js.Parser();
+    const result = await parser.parseStringPromise(response.data);
+    
+    // Mencari area yang paling mendekati koordinat (untuk sementara kita ambil area pertama)
+    // Di masa depan, kamu bisa filter berdasarkan nama kota yang ada di DB
+    const area = result.data.forecast[0].area[0]; 
+    const tempParam = area.parameter.find(p => p.$.id === 't'); // 't' adalah kode suhu di BMKG
+    
+    weatherInfo = {
+      temp: tempParam.timerange[0].value[0]._,
+      condition: "Data BMKG Pusat",
+      icon: "https://www.bmkg.go.id/asset/img/logo/logo-bmkg.png"
+    };
+  } catch (weatherErr) {
+    console.error("Gagal ambil data BMKG Pusat:", weatherErr.message);
+  }
     // --- LOGIKA CUACA SELESAI ---
 
     return reply.send({
