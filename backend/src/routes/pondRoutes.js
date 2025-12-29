@@ -6,7 +6,9 @@ const {
   createStrikeFeed, getStrikeFeeds, getLeaderboard,
   adminDeleteStrikeFeed, adminDeleteReview,
   updateExpiredBookings, getNotifications, markNotificationRead,
-  getMasterFacilities, getFishMaster
+  getMasterFacilities, getFishMaster, createWildSpot, updateWildSpot,
+  deleteWildSpot, getSpotReviews, createReview,
+  getAdminPonds, approveSpot, getOwnerTransactions
 } = require('../controllers/pondController');
 
 const { authenticate } = require('../middleware/authMiddleware');
@@ -31,11 +33,24 @@ async function pondRoutes(fastify, options) {
   // --- KEUANGAN OWNER ---
   fastify.get('/wallet', { preHandler: [authenticate] }, getOwnerWallet);
   fastify.post('/withdraw', { preHandler: [authenticate] }, withdrawFunds);
+  fastify.get('/owner-transactions', { preHandler: [authenticate] }, getOwnerTransactions);
 
   // --- ADMIN & SISTEM ---
+
+  // Fitur Admin untuk Approval Spot Komersial
+  fastify.get('/admin/ponds', { preHandler: [authenticate] }, getAdminPonds);
+  fastify.patch('/admin/approve-spot/:id', { preHandler: [authenticate] }, approveSpot);
+  
   // Route untuk bersih-bersih kursi kadaluwarsa secara manual
   fastify.post('/system/refresh-seats', updateExpiredBookings); 
+  fastify.post('/wild-spots', { preHandler: [authenticate] }, createWildSpot);
+  fastify.put('/wild-spots/:id', { preHandler: [authenticate] }, updateWildSpot);
+  fastify.delete('/wild-spots/:id', { preHandler: [authenticate] }, deleteWildSpot); // Route Hapus
   
+  // ulasan
+  fastify.get('/reviews', getSpotReviews); // Untuk melihat ulasan di detail spot
+  fastify.post('/reviews', { preHandler: [authenticate] }, createReview); // Untuk user kasih bintang/ulasan
+
   // Hapus postingan/ulasan bermasalah
   fastify.delete('/admin/feed/:id', { preHandler: [authenticate] }, adminDeleteStrikeFeed);
   fastify.delete('/admin/review/:id', { preHandler: [authenticate] }, adminDeleteReview);
