@@ -5,10 +5,11 @@ const {
   registerEvent, getOwnerWallet, withdrawFunds,
   createStrikeFeed, getStrikeFeeds, getLeaderboard,
   adminDeleteStrikeFeed, adminDeleteReview,
-  updateExpiredBookings, getNotifications, markNotificationRead
+  updateExpiredBookings, getNotifications, markNotificationRead,
+  getMasterFacilities, getFishMaster
 } = require('../controllers/pondController');
 
-const { authenticate } = require('../middleware/auth');
+const { authenticate } = require('../middleware/authMiddleware');
 
 async function pondRoutes(fastify, options) {
   
@@ -42,6 +43,10 @@ async function pondRoutes(fastify, options) {
   // untuk notifikasi
   fastify.get('/notifications', { preHandler: [authenticate] }, getNotifications);
   fastify.patch('/notifications/:id/read', { preHandler: [authenticate] }, markNotificationRead);
+
+  // untuk dropdown 
+  fastify.get('/master-facilities', getMasterFacilities);
+  fastify.get('/master-fish', getFishMaster);
 }
 
 module.exports = pondRoutes;

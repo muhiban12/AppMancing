@@ -45,7 +45,7 @@ const start = async () => {
 };
 
 // Contoh di server.js
-const { updateExpiredBookings } = require('./controllers/pondController');
+const { updateExpiredBookings } = require('./src/controllers/pondController');
 
 // Jalankan pengecekan setiap 5 menit
 setInterval(async () => {

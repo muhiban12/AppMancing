@@ -50,19 +50,27 @@ const createPond = async (request, reply) => {
   const { 
     nama_spot, deskripsi, harga_per_jam, alamat, 
     latitude, longitude, total_kursi, jam_buka, jam_tutup,
-    fasilitas_ids // Contoh: [1, 2, 4]
+    kode_wilayah, foto_utama, fasilitas_ids 
   } = request.body;
   
   const ownerId = request.user.id; 
-  const connection = await pool.getConnection(); // Gunakan connection untuk transaksi
+  const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
 
-    // 1. Simpan data spot
+    // 1. Simpan data spot (Menambahkan kode_wilayah dan foto_utama)
     const [result] = await connection.execute(
-      'INSERT INTO spots (owner_id, nama_spot, deskripsi, harga_per_jam, alamat, latitude, longitude, total_kursi, jam_buka, jam_tutup) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [ownerId, nama_spot, deskripsi, harga_per_jam, alamat, latitude, longitude, total_kursi, jam_buka, jam_tutup]
+      `INSERT INTO spots (
+        owner_id, nama_spot, deskripsi, harga_per_jam, alamat, 
+        latitude, longitude, total_kursi, jam_buka, jam_tutup, 
+        kode_wilayah, foto_utama, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [
+        ownerId, nama_spot, deskripsi, harga_per_jam, alamat, 
+        latitude, longitude, total_kursi, jam_buka, jam_tutup, 
+        kode_wilayah, foto_utama
+      ]
     );
 
     const spotId = result.insertId;
@@ -77,7 +85,11 @@ const createPond = async (request, reply) => {
     }
 
     await connection.commit();
-    return reply.code(201).send({ status: 'Success', message: 'Spot dan fasilitas berhasil disimpan!' });
+    return reply.code(201).send({ 
+      status: 'Success', 
+      message: 'Pengajuan spot berhasil dikirim! Menunggu persetujuan admin.',
+      spotId: spotId 
+    });
 
   } catch (error) {
     await connection.rollback();
@@ -181,41 +193,46 @@ const createWildSpot = async (request, reply) => {
 };
 
 const getAllMapSpots = async (request, reply) => {
-  // Ambil koordinat GPS user dan radius maksimal dari Frontend
-  const { user_lat, user_lon, radius_km = 10 } = request.query;
+  // Ambil koordinat user, radius, dan kata kunci pencarian (search)
+  const { user_lat, user_lon, radius_km = 10, search = '' } = request.query;
 
   if (!user_lat || !user_lon) {
     return reply.code(400).send({ message: 'Koordinat lokasi kamu diperlukan untuk melihat spot terdekat.' });
   }
 
-  // Parameter untuk rumus Haversine (Latitude, Longitude, Latitude)
-  const params = [user_lat, user_lon, user_lat, user_lat, user_lon, user_lat];
+  // Parameter untuk Haversine + Filter Nama (Liar & Komersial)
+  // Kita tambahkan wildcard % untuk pencarian partial (LIKE)
+  const searchPattern = `%${search}%`;
+  const params = [
+    user_lat, user_lon, user_lat, searchPattern, // Parameter untuk blok Komersial
+    user_lat, user_lon, user_lat, searchPattern, // Parameter untuk blok Liar
+    radius_km // Filter radius terakhir
+  ];
 
-  // Query UNION untuk mencari spot komersil & liar yang masuk radius
   const query = `
     SELECT * FROM (
       SELECT id, nama_spot AS nama, latitude, longitude, 'Komersial' AS tipe, foto_utama,
       (6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) AS jarak
-      FROM spots WHERE status = 'approved'
+      FROM spots 
+      WHERE status = 'approved' AND nama_spot LIKE ?
       
       UNION
       
       SELECT id, nama_lokasi AS nama, latitude, longitude, 'Alam Liar' AS tipe, foto_carousel AS foto_utama,
       (6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) AS jarak
       FROM wild_spots
+      WHERE nama_lokasi LIKE ?
     ) AS gabungan
     WHERE jarak <= ? 
     ORDER BY jarak ASC
   `;
-
-  // Tambahkan radius_km ke dalam parameter query
-  params.push(radius_km);
 
   try {
     const [rows] = await pool.execute(query, params);
     return reply.send({
       status: 'Success',
       total_found: rows.length,
+      search_keyword: search,
       data: rows
     });
   } catch (error) {
@@ -225,13 +242,15 @@ const getAllMapSpots = async (request, reply) => {
 
 const getSpotDetail = async (request, reply) => {
   const { id } = request.params;
-  const { tipe } = request.query;
+  const { tipe } = request.query; // 'liar' atau 'komersial'
 
   try {
     let query = '';
     if (tipe === 'liar') {
+      // Mengambil data dari tabel wild_spots
       query = 'SELECT * FROM wild_spots WHERE id = ?';
     } else {
+      // Mengambil data dari tabel spots
       query = `
         SELECT s.*, GROUP_CONCAT(mf.nama_fasilitas) as fasilitas 
         FROM spots s
@@ -250,26 +269,38 @@ const getSpotDetail = async (request, reply) => {
 
     const spotData = rows[0];
 
-    // --- LOGIKA CUACA BMKG ---
-    let weatherInfo = { temp: "N/A", condition: "Tidak Tersedia", icon: "" };
+    // --- LOGIKA CUACA JSON BMKG (LOGIKA DARI PHP BMKG) ---
+    // Default info jika data tidak tersedia
+    let weatherInfo = { 
+        temp: "N/A", 
+        condition: "Pilih lokasi", 
+        humidity: "N/A", 
+        wind_speed: "N/A",
+        icon: "" 
+    };
     
-    try {
-      // Kita ambil data Jawa Barat sebagai contoh pusat
-      const response = await axios.get('https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaBarat.xml', { timeout: 5000 });
-      const parser = new xml2js.Parser();
-      const result = await parser.parseStringPromise(response.data);
-      
-      // Ambil data area pertama (Biasanya Bandung/Pusat Jabar)
-      const area = result.data.forecast[0].area[0];
-      const tempParam = area.parameter.find(p => p.$.id === 't'); 
-      
-      weatherInfo = {
-        temp: tempParam.timerange[0].value[0]._,
-        condition: "Cerah Berawan (BMKG)",
-        icon: "https://www.bmkg.go.id/asset/img/logo/logo-bmkg.png"
-      };
-    } catch (weatherErr) {
-      console.error("BMKG Timeout/Error, menggunakan data default");
+    // Ambil kode_wilayah (adm4) dari kolom database yang baru kamu alter
+    const adm4 = spotData.kode_wilayah; 
+
+    if (adm4) {
+      try {
+        // Memanggil API BMKG sesuai contoh di file PHP (adm4 parameter)
+        const response = await axios.get(`https://api.bmkg.go.id/publik/prakiraan-cuaca?adm4=${adm4}`, { timeout: 5000 });
+        
+        // Mengambil ramalan jam pertama (index 0) dari hari pertama (index 0)
+        const forecast = response.data.data[0].cuaca[0][0]; 
+        
+        // Memetakan parameter sesuai dokumentasi BMKG
+        weatherInfo = {
+          temp: `${forecast.t}°C`,          // t = Suhu
+          condition: forecast.weather_desc, // weather_desc = Kondisi
+          humidity: `${forecast.hu}%`,      // hu = Kelembapan
+          wind_speed: `${forecast.ws} km/j`,// ws = Kecepatan Angin
+          icon: forecast.image              // Mengambil URL icon langsung
+        };
+      } catch (weatherErr) {
+        console.error("Gagal mengambil data BMKG:", weatherErr.message);
+      }
     }
 
     return reply.send({
@@ -458,10 +489,23 @@ const getOwnerTransactions = async (request, reply) => {
 
 // bagian strike feeds
 const createStrikeFeed = async (request, reply) => {
-  const { wild_spot_id, nama_ikan, berat, panjang, caption, foto_ikan } = request.body; 
+  const { 
+    wild_spot_id, 
+    nama_ikan, 
+    berat, 
+    panjang, 
+    caption, 
+    foto_ikan 
+  } = request.body; 
+  
   const userId = request.user.id;
 
   try {
+    // Validasi sederhana: pastikan data penting tidak kosong
+    if (!wild_spot_id || !nama_ikan || !foto_ikan) {
+      return reply.code(400).send({ message: 'Lokasi, jenis ikan, dan foto wajib diisi!' });
+    }
+
     const query = `
       INSERT INTO strike_feeds (user_id, wild_spot_id, nama_ikan, berat, panjang, caption, foto_ikan) 
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -470,7 +514,7 @@ const createStrikeFeed = async (request, reply) => {
 
     return reply.code(201).send({ 
       status: 'Success', 
-      message: 'Postingan strike liar berhasil diunggah!' 
+      message: 'Mantap! Strike kamu berhasil diposting ke komunitas.' 
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -662,9 +706,35 @@ const markNotificationRead = async (request, reply) => {
   }
 };
 
+// Fungsi untuk mengambil daftar fasilitas yang tersedia
+const getMasterFacilities = async (request, reply) => {
+  try {
+    const [rows] = await pool.execute("SELECT id, nama_fasilitas, ikon FROM master_fasilitas");
+    return reply.send({
+      status: 'Success',
+      data: rows
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+// Fungsi untuk mengambil daftar ikan untuk pilihan di Strike Feed
+const getFishMaster = async (request, reply) => {
+  try {
+    const [rows] = await pool.execute("SELECT * FROM fish_master ORDER BY nama_ikan ASC");
+    return reply.send({
+      status: 'Success',
+      data: rows
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
 // Update exports paling bawah
 module.exports = { getAllPonds, createPond, updatePond, deletePond, approveSpot,
    getAdminPonds, createWildSpot, getAllMapSpots, getSpotDetail, getSpotSeats, createBooking,
    getUserBookings, getOwnerWallet, withdrawFunds, getOwnerTransactions, createStrikeFeed, getStrikeFeeds,
    createReview, getSpotReviews, getLeaderboard, adminDeleteStrikeFeed, adminDeleteReview, registerEvent,
-   updateExpiredBookings, getNotifications, markNotificationRead};
+   updateExpiredBookings, getNotifications, markNotificationRead, getMasterFacilities, getFishMaster};
