@@ -12,6 +12,7 @@ const {
 } = require('../controllers/pondController');
 
 const { authenticate } = require('../middleware/authMiddleware');
+const upload = require('../middlewares/upload');
 
 async function pondRoutes(fastify, options) {
   
@@ -27,7 +28,16 @@ async function pondRoutes(fastify, options) {
 
   // --- KOMUNITAS & LEADERBOARD ---
   fastify.get('/feeds', getStrikeFeeds);
-  fastify.post('/feeds', { preHandler: [authenticate] }, createStrikeFeed);
+  fastify.post(
+    '/feeds',
+    {
+      preHandler: [
+        authenticate,
+        upload.single('foto')
+      ]
+    },
+    createStrikeFeed
+  );
   fastify.get('/leaderboard', getLeaderboard);
 
   // --- KEUANGAN OWNER ---

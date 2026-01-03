@@ -1,6 +1,11 @@
 const pool = require('../config/db');
 const xml2js = require('xml2js');
 const axios = require('axios');
+const buildFileUrl = (request, folder) => {
+  if (!request.file) return null;
+  return `${request.protocol}://${request.hostname}/uploads/${folder}/${request.file.filename}`;
+};
+
 
 const getAllPonds = async (request, reply) => {
   try {
@@ -50,16 +55,21 @@ const createPond = async (request, reply) => {
   const { 
     nama_spot, deskripsi, harga_per_jam, alamat, 
     latitude, longitude, total_kursi, jam_buka, jam_tutup,
-    kode_wilayah, foto_utama, fasilitas_ids 
+    kode_wilayah, fasilitas_ids 
   } = request.body;
-  
-  const ownerId = request.user.id; 
+
+  const ownerId = request.user.id;
+  const fotoUtama = buildFileUrl(request, 'ponds'); // ✅
+
+  if (!fotoUtama) {
+    return reply.code(400).send({ message: 'Foto utama wajib diupload' });
+  }
+
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
 
-    // 1. Simpan data spot (Menambahkan kode_wilayah dan foto_utama)
     const [result] = await connection.execute(
       `INSERT INTO spots (
         owner_id, nama_spot, deskripsi, harga_per_jam, alamat, 
@@ -67,77 +77,70 @@ const createPond = async (request, reply) => {
         kode_wilayah, foto_utama, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
       [
-        ownerId, nama_spot, deskripsi, harga_per_jam, alamat, 
-        latitude, longitude, total_kursi, jam_buka, jam_tutup, 
-        kode_wilayah, foto_utama
+        ownerId, nama_spot, deskripsi, harga_per_jam, alamat,
+        latitude, longitude, total_kursi, jam_buka, jam_tutup,
+        kode_wilayah, fotoUtama
       ]
     );
 
-    const spotId = result.insertId;
-
-    // 2. Simpan fasilitas jika ada
-    if (fasilitas_ids && fasilitas_ids.length > 0) {
-      const values = fasilitas_ids.map(fId => [spotId, fId]);
-      await connection.query(
-        'INSERT INTO spot_facilities (spot_id, fasilitas_id) VALUES ?',
-        [values]
-      );
-    }
-
     await connection.commit();
-    return reply.code(201).send({ 
-      status: 'Success', 
-      message: 'Pengajuan spot berhasil dikirim! Menunggu persetujuan admin.',
-      spotId: spotId 
+
+    reply.code(201).send({
+      status: 'Success',
+      spotId: result.insertId,
+      foto: fotoUtama
     });
 
-  } catch (error) {
+  } catch (err) {
     await connection.rollback();
-    return reply.code(500).send({ error: error.message });
+    reply.code(500).send({ error: err.message });
   } finally {
     connection.release();
   }
 };
 
+
 const updatePond = async (request, reply) => {
   const { id } = request.params;
   const { 
-    nama_spot, deskripsi, harga_per_jam, alamat, 
-    total_kursi, jam_buka, jam_tutup, 
-    kode_wilayah, foto_utama // Tambahkan ini
+    nama_spot, deskripsi, harga_per_jam, alamat,
+    total_kursi, jam_buka, jam_tutup, kode_wilayah
   } = request.body;
+
   const ownerId = request.user.id;
+  const fotoUtama = buildFileUrl(request, 'ponds');
 
-  try {
-    const [spot] = await pool.execute('SELECT owner_id FROM spots WHERE id = ?', [id]);
+  const [spot] = await pool.execute(
+    'SELECT owner_id FROM spots WHERE id = ?', [id]
+  );
 
-    if (spot.length === 0) {
-      return reply.code(404).send({ message: 'Spot tidak ditemukan' });
-    }
-
-    if (spot[0].owner_id !== ownerId) {
-      return reply.code(403).send({ message: 'Kamu tidak berhak mengedit spot ini!' });
-    }
-
-    // Update mencakup kode_wilayah untuk akurasi cuaca
-    await pool.execute(
-      `UPDATE spots SET 
-        nama_spot=?, deskripsi=?, harga_per_jam=?, alamat=?, 
-        total_kursi=?, jam_buka=?, jam_tutup=?, 
-        kode_wilayah=?, foto_utama=? 
-      WHERE id = ?`,
-      [
-        nama_spot, deskripsi, harga_per_jam, alamat, 
-        total_kursi, jam_buka, jam_tutup, 
-        kode_wilayah, foto_utama, id
-      ]
-    );
-
-    return reply.send({ status: 'Success', message: 'Data spot berhasil diperbarui!' });
-  } catch (error) {
-    return reply.code(500).send({ error: error.message });
+  if (!spot.length || spot[0].owner_id !== ownerId) {
+    return reply.code(403).send({ message: 'Akses ditolak' });
   }
+
+  let query = `
+    UPDATE spots SET
+      nama_spot=?, deskripsi=?, harga_per_jam=?, alamat=?,
+      total_kursi=?, jam_buka=?, jam_tutup=?, kode_wilayah=?
+  `;
+  const values = [
+    nama_spot, deskripsi, harga_per_jam, alamat,
+    total_kursi, jam_buka, jam_tutup, kode_wilayah
+  ];
+
+  if (fotoUtama) {
+    query += `, foto_utama=?`;
+    values.push(fotoUtama);
+  }
+
+  query += ` WHERE id=?`;
+  values.push(id);
+
+  await pool.execute(query, values);
+
+  reply.send({ status: 'Success', foto: fotoUtama || 'tidak diubah' });
 };
+
 
 const deletePond = async (request, reply) => {
   const { id } = request.params;
@@ -212,36 +215,34 @@ const createWildSpot = async (request, reply) => {
 
 const updateWildSpot = async (request, reply) => {
   const { id } = request.params;
-  const { 
-    nama_lokasi, kabupaten_provinsi, deskripsi_spot, 
-    latitude, longitude, status_potensi,
-    kode_wilayah, foto_carousel 
+  const {
+    nama_lokasi, kabupaten_provinsi, deskripsi_spot,
+    latitude, longitude, status_potensi, kode_wilayah
   } = request.body;
 
-  try {
-    // Cek apakah data ada
-    const [exist] = await pool.execute('SELECT id FROM wild_spots WHERE id = ?', [id]);
-    if (exist.length === 0) {
-      return reply.code(404).send({ message: 'Spot liar tidak ditemukan' });
-    }
+  const fotoCarousel = buildFileUrl(request, 'wildspots');
 
-    await pool.execute(
-      `UPDATE wild_spots SET 
-        nama_lokasi=?, kabupaten_provinsi=?, deskripsi_spot=?, 
-        latitude=?, longitude=?, status_potensi=?, 
-        kode_wilayah=?, foto_carousel=? 
-      WHERE id = ?`,
-      [
-        nama_lokasi, kabupaten_provinsi, deskripsi_spot, 
-        latitude, longitude, status_potensi, 
-        kode_wilayah, foto_carousel, id
-      ]
-    );
+  let query = `
+    UPDATE wild_spots SET
+      nama_lokasi=?, kabupaten_provinsi=?, deskripsi_spot=?,
+      latitude=?, longitude=?, status_potensi=?, kode_wilayah=?
+  `;
+  const values = [
+    nama_lokasi, kabupaten_provinsi, deskripsi_spot,
+    latitude, longitude, status_potensi, kode_wilayah
+  ];
 
-    return reply.send({ status: 'Success', message: 'Data spot liar berhasil diperbarui oleh Admin!' });
-  } catch (error) {
-    return reply.code(500).send({ error: error.message });
+  if (fotoCarousel) {
+    query += `, foto_carousel=?`;
+    values.push(fotoCarousel);
   }
+
+  query += ` WHERE id=?`;
+  values.push(id);
+
+  await pool.execute(query, values);
+
+  reply.send({ status: 'Success', foto: fotoCarousel || 'tidak diubah' });
 };
 
 const deleteWildSpot = async (request, reply) => {
@@ -572,28 +573,42 @@ const createStrikeFeed = async (request, reply) => {
     nama_ikan, 
     berat, 
     panjang, 
-    caption, 
-    foto_ikan 
-  } = request.body; 
-  
+    caption
+  } = request.body;
+
   const userId = request.user.id;
 
+  // ⬇️ INI DIA FOTO URL-NYA
+  const fotoUrl = buildFileUrl(request, 'feeds');
+
   try {
-    // Validasi sederhana: pastikan data penting tidak kosong
-    if (!wild_spot_id || !nama_ikan || !foto_ikan) {
-      return reply.code(400).send({ message: 'Lokasi, jenis ikan, dan foto wajib diisi!' });
+    if (!wild_spot_id || !nama_ikan || !fotoUrl) {
+      return reply.code(400).send({ 
+        message: 'Lokasi, jenis ikan, dan foto wajib diisi!' 
+      });
     }
 
-    const query = `
-      INSERT INTO strike_feeds (user_id, wild_spot_id, nama_ikan, berat, panjang, caption, foto_ikan) 
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `;
-    await pool.execute(query, [userId, wild_spot_id, nama_ikan, berat, panjang, caption, foto_ikan]);
+    await pool.execute(
+      `INSERT INTO strike_feeds 
+       (user_id, wild_spot_id, nama_ikan, berat, panjang, caption, foto_ikan) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId, 
+        wild_spot_id, 
+        nama_ikan, 
+        berat, 
+        panjang, 
+        caption, 
+        fotoUrl // ✅ DISIMPAN KE DB
+      ]
+    );
 
     return reply.code(201).send({ 
       status: 'Success', 
-      message: 'Mantap! Strike kamu berhasil diposting ke komunitas.' 
+      message: 'Strike berhasil diposting!',
+      foto: fotoUrl
     });
+
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
@@ -617,31 +632,31 @@ const getStrikeFeeds = async (request, reply) => {
 
 // reviews
 const createReview = async (request, reply) => {
-  const { spot_id, wild_spot_id, rating, ulasan, foto_ulasan } = request.body;
+  const { spot_id, wild_spot_id, rating, ulasan } = request.body;
   const userId = request.user.id;
 
-  try {
-    const query = `
-      INSERT INTO reviews (user_id, spot_id, wild_spot_id, rating, ulasan, foto_ulasan) 
-      VALUES (?, ?, ?, ?, ?, ?)
-    `;
-    await pool.execute(query, [
-      userId, 
-      spot_id || null, 
-      wild_spot_id || null, 
-      rating, 
-      ulasan, 
-      foto_ulasan
-    ]);
+  const fotoUlasan = buildFileUrl(request, 'reviews');
 
-    return reply.code(201).send({ 
-      status: 'Success', 
-      message: 'Terima kasih! Ulasan kamu telah dipublikasikan.' 
-    });
-  } catch (error) {
-    return reply.code(500).send({ error: error.message });
-  }
+  await pool.execute(
+    `INSERT INTO reviews
+     (user_id, spot_id, wild_spot_id, rating, ulasan, foto_ulasan)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      userId,
+      spot_id || null,
+      wild_spot_id || null,
+      rating,
+      ulasan,
+      fotoUlasan
+    ]
+  );
+
+  reply.code(201).send({
+    status: 'Success',
+    foto: fotoUlasan
+  });
 };
+
 
 const getSpotReviews = async (request, reply) => {
   const { spot_id, type } = request.query; // type: 'komersial' atau 'liar'

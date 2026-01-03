@@ -2,19 +2,51 @@ const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
 
 const register = async (request, reply) => {
-  const { nama_lengkap, email, password, nomer_wa, provinsi_asal, kota_kabupaten, role_id } = request.body;
+  const {
+    nama_lengkap,
+    email,
+    password,
+    nomer_wa,
+    provinsi_asal,
+    kota_kabupaten
+  } = request.body;
+
   try {
-    const [existing] = await pool.execute('SELECT id FROM users WHERE email = ?', [email]);
-    if (existing.length > 0) return reply.code(400).send({ message: 'Email sudah terdaftar' });
+    const [existing] = await pool.execute(
+      'SELECT id FROM users WHERE email = ?',
+      [email]
+    );
+
+    if (existing.length > 0) {
+      return reply.code(400).send({ message: 'Email sudah terdaftar' });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
+
+    // 1️⃣ Insert user
     const [result] = await pool.execute(
-      'INSERT INTO users (nama_lengkap, email, password, nomer_wa, provinsi_asal, kota_kabupaten) VALUES (?, ?, ?, ?, ?, ?)',
+      `INSERT INTO users 
+       (nama_lengkap, email, password, nomer_wa, provinsi_asal, kota_kabupaten)
+       VALUES (?, ?, ?, ?, ?, ?)`,
       [nama_lengkap, email, hashedPassword, nomer_wa, provinsi_asal, kota_kabupaten]
     );
-    await pool.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [result.insertId, role_id || 3]);
-    return reply.code(201).send({ status: 'Success', message: 'Registrasi Berhasil!' });
-  } catch (error) { return reply.code(500).send({ error: error.message }); }
+
+    // 2️⃣ Set role DEFAULT = angler (misal role_id = 3)
+    await pool.execute(
+      'INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)',
+      [result.insertId, 3]
+    );
+
+    return reply.code(201).send({
+      status: 'Success',
+      message: 'Registrasi berhasil sebagai Angler'
+    });
+
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
 };
+
 
 const login = async (request, reply) => {
   const { email, password } = request.body;

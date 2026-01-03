@@ -1,9 +1,19 @@
 require('dotenv').config();
+const path = require('path');
+const multer = require('fastify-multer');
 const fastify = require('fastify')({ logger: true });
 
 // Register CORS agar bisa diakses browser/frontend nanti
 fastify.register(require('@fastify/cors'), { origin: "*" });
 
+
+fastify.register(multer.contentParser);
+
+// untuk mekanisme uploud foto 
+fastify.register(require('@fastify/static'), {
+  root: path.join(__dirname, 'uploads'),
+  prefix: '/uploads/', // URL publik
+});
 // Daftarkan JWT (Gunakan secret dari .env)
 fastify.register(require('@fastify/jwt'), {
   secret: process.env.JWT_SECRET || 'supersecret'
@@ -11,6 +21,9 @@ fastify.register(require('@fastify/jwt'), {
 
 // Panggil koneksi database
 const pool = require('./src/config/db');
+
+
+
 
 // API sederhana untuk cek apakah database sudah konek
 fastify.get('/cek-koneksi', async (request, reply) => {
