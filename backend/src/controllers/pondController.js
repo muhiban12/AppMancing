@@ -1,19 +1,24 @@
-const pool = require('../config/db');
-const xml2js = require('xml2js');
-const axios = require('axios');
+const pool = require("../config/db");
+const xml2js = require("xml2js");
+const axios = require("axios");
+const BASE_URL = process.env.BASE_URL;
+
 const buildFileUrl = (request, folder) => {
   if (!request.file) return null;
-  return `${request.protocol}://${request.hostname}/uploads/${folder}/${request.file.filename}`;
+  return `${BASE_URL}/uploads/${folder}/${request.file.filename}`;
 };
 
+const isNumber = (val) => !isNaN(val) && val !== null;
 
 const getAllPonds = async (request, reply) => {
   try {
     // Ubah query agar hanya mengambil yang statusnya 'approved'
-    const [rows] = await pool.execute("SELECT * FROM spots WHERE status = 'approved'");
+    const [rows] = await pool.execute(
+      "SELECT * FROM spots WHERE status = 'approved'"
+    );
     return reply.send({
-      status: 'Success',
-      data: rows
+      status: "Success",
+      data: rows,
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -24,8 +29,8 @@ const getAdminPonds = async (request, reply) => {
   try {
     const [rows] = await pool.execute("SELECT * FROM spots");
     return reply.send({
-      status: 'Success',
-      data: rows
+      status: "Success",
+      data: rows,
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -37,32 +42,50 @@ const getSpotSeats = async (request, reply) => {
 
   try {
     const [rows] = await pool.execute(
-      "SELECT * FROM seats WHERE spot_id = ? AND status = 'Available'", 
+      "SELECT * FROM seats WHERE spot_id = ? AND status = 'Available'",
       [spot_id]
     );
-    
+
     return reply.send({
-      status: 'Success',
-      data: rows
+      status: "Success",
+      data: rows,
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
 };
 
-
 const createPond = async (request, reply) => {
-  const { 
-    nama_spot, deskripsi, harga_per_jam, alamat, 
-    latitude, longitude, total_kursi, jam_buka, jam_tutup,
-    kode_wilayah, fasilitas_ids 
+  const {
+    nama_spot,
+    deskripsi,
+    harga_per_jam,
+    alamat,
+    latitude,
+    longitude,
+    total_kursi,
+    jam_buka,
+    jam_tutup,
+    kode_wilayah,
+    fasilitas_ids,
   } = request.body;
 
   const ownerId = request.user.id;
-  const fotoUtama = buildFileUrl(request, 'ponds'); // ✅
+  const fotoUtama = buildFileUrl(request, "ponds"); // ✅
 
+  if (harga_per_jam <= 0) {
+    return reply.code(400).send({ message: "Harga per jam tidak valid" });
+  }
+
+  if (total_kursi <= 0 || total_kursi > 100) {
+    return reply.code(400).send({ message: "Jumlah kursi tidak valid" });
+  }
+
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    return reply.code(400).send({ message: "Koordinat tidak valid" });
+  }
   if (!fotoUtama) {
-    return reply.code(400).send({ message: 'Foto utama wajib diupload' });
+    return reply.code(400).send({ message: "Foto utama wajib diupload" });
   }
 
   const connection = await pool.getConnection();
@@ -77,20 +100,35 @@ const createPond = async (request, reply) => {
         kode_wilayah, foto_utama, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
       [
-        ownerId, nama_spot, deskripsi, harga_per_jam, alamat,
-        latitude, longitude, total_kursi, jam_buka, jam_tutup,
-        kode_wilayah, fotoUtama
+        ownerId,
+        nama_spot,
+        deskripsi,
+        harga_per_jam,
+        alamat,
+        latitude,
+        longitude,
+        total_kursi,
+        jam_buka,
+        jam_tutup,
+        kode_wilayah,
+        fotoUtama,
       ]
     );
+
+    for (let i = 1; i <= total_kursi; i++) {
+      await connection.execute(
+        'INSERT INTO seats (spot_id, nomor_kursi, status) VALUES (?, ?, "Available")',
+        [result.insertId, i]
+      );
+    }
 
     await connection.commit();
 
     reply.code(201).send({
-      status: 'Success',
+      status: "Success",
       spotId: result.insertId,
-      foto: fotoUtama
+      foto: fotoUtama,
     });
-
   } catch (err) {
     await connection.rollback();
     reply.code(500).send({ error: err.message });
@@ -99,83 +137,128 @@ const createPond = async (request, reply) => {
   }
 };
 
-
 const updatePond = async (request, reply) => {
-  const { id } = request.params;
-  const { 
-    nama_spot, deskripsi, harga_per_jam, alamat,
-    total_kursi, jam_buka, jam_tutup, kode_wilayah
-  } = request.body;
-
   const ownerId = request.user.id;
-  const fotoUtama = buildFileUrl(request, 'ponds');
+  const pondId = request.params.id;
 
-  const [spot] = await pool.execute(
-    'SELECT owner_id FROM spots WHERE id = ?', [id]
+  const { nama_spot, alamat, harga_per_jam } = request.body;
+  const fotoBaru = buildFileUrl(request, "ponds");
+
+  const [pond] = await pool.execute(
+    'SELECT id FROM spots WHERE id = ? AND owner_id = ? AND status != "deleted"',
+    [pondId, ownerId]
   );
 
-  if (!spot.length || spot[0].owner_id !== ownerId) {
-    return reply.code(403).send({ message: 'Akses ditolak' });
+  if (!pond.length) {
+    return reply
+      .code(403)
+      .send({ message: "Pond tidak ditemukan atau bukan milik Anda" });
   }
 
-  let query = `
-    UPDATE spots SET
-      nama_spot=?, deskripsi=?, harga_per_jam=?, alamat=?,
-      total_kursi=?, jam_buka=?, jam_tutup=?, kode_wilayah=?
-  `;
-  const values = [
-    nama_spot, deskripsi, harga_per_jam, alamat,
-    total_kursi, jam_buka, jam_tutup, kode_wilayah
-  ];
+  let fields = [];
+  let values = [];
 
-  if (fotoUtama) {
-    query += `, foto_utama=?`;
-    values.push(fotoUtama);
+  if (nama_spot) {
+    fields.push("nama_spot=?");
+    values.push(nama_spot);
+  }
+  if (alamat) {
+    fields.push("alamat=?");
+    values.push(alamat);
+  }
+  if (harga_per_jam) {
+    if (harga_per_jam <= 0) {
+      return reply.code(400).send({ message: "Harga tidak valid" });
+    }
+    fields.push("harga_per_jam=?");
+    values.push(harga_per_jam);
+  }
+  if (fotoBaru) {
+    fields.push("foto_utama=?");
+    values.push(fotoBaru);
   }
 
-  query += ` WHERE id=?`;
-  values.push(id);
+  if (fields.length === 0) {
+    return reply.code(400).send({ message: "Tidak ada data diubah" });
+  }
 
-  await pool.execute(query, values);
+  fields.push(`status='pending'`);
 
-  reply.send({ status: 'Success', foto: fotoUtama || 'tidak diubah' });
+  await pool.execute(`UPDATE spots SET ${fields.join(", ")} WHERE id=?`, [
+    ...values,
+    pondId,
+  ]);
+
+  reply.send({ message: "Update berhasil, menunggu approval admin" });
 };
 
-
-const deletePond = async (request, reply) => {
-  const { id } = request.params;
+const requestDeletePond = async (request, reply) => {
   const ownerId = request.user.id;
+  const pondId = request.params.id;
 
-  try {
-    // 1. Cek kepemilikan spot
-    const [spot] = await pool.execute('SELECT owner_id FROM spots WHERE id = ?', [id]);
+  const [pond] = await pool.execute(
+    'SELECT id FROM spots WHERE id = ? AND owner_id = ? AND status != "deleted"',
+    [pondId, ownerId]
+  );
 
-    if (spot.length === 0) {
-      return reply.code(404).send({ message: 'Spot tidak ditemukan' });
-    }
-
-    // Hanya pemilik (Owner) atau Admin yang boleh hapus
-    if (spot[0].owner_id !== ownerId) {
-      return reply.code(403).send({ message: 'Akses ditolak! Kamu bukan pemilik spot ini.' });
-    }
-
-    // 2. Hapus data (relasi di spot_facilities akan otomatis terhapus karena ON DELETE CASCADE)
-    await pool.execute('DELETE FROM spots WHERE id = ?', [id]);
-
-    return reply.send({ status: 'Success', message: 'Spot pancing berhasil dihapus selamanya.' });
-  } catch (error) {
-    return reply.code(500).send({ error: error.message });
+  if (!pond.length) {
+    return reply.code(404).send({ message: "Pond tidak ditemukan" });
   }
+
+  await pool.execute(
+    'UPDATE spots SET status = "delete_requested" WHERE id = ?',
+    [pondId]
+  );
+
+  reply.send({ message: "Permintaan hapus dikirim ke admin" });
+};
+
+const approveDeletePond = async (request, reply) => {
+  const pondId = request.params.id;
+
+  await pool.execute(
+    'UPDATE spots SET status = "deleted" WHERE id = ? AND status = "delete_requested"',
+    [pondId]
+  );
+
+  reply.send({ message: "Pond berhasil dihapus" });
 };
 
 // Fungsi untuk Admin mengubah status spot
 const approveSpot = async (request, reply) => {
   const { id } = request.params;
-  const { status } = request.body; // 'approved' atau 'rejected'
+  const { status } = request.body; // approved | rejected
+
+  const ALLOWED_STATUS = ["approved", "rejected"];
+
+  if (!ALLOWED_STATUS.includes(status)) {
+    return reply.code(400).send({
+      status: "Error",
+      message: "Status tidak valid",
+    });
+  }
 
   try {
-    await pool.execute('UPDATE spots SET status = ? WHERE id = ?', [status, id]);
-    return reply.send({ status: 'Success', message: `Spot pancing kini berstatus: ${status}` });
+    const [check] = await pool.execute("SELECT id FROM spots WHERE id = ?", [
+      id,
+    ]);
+
+    if (check.length === 0) {
+      return reply.code(404).send({
+        status: "Error",
+        message: "Spot tidak ditemukan",
+      });
+    }
+
+    await pool.execute(
+      'UPDATE spots SET status = ? WHERE id = ? AND status = "pending"',
+      [status, id]
+    );
+
+    return reply.send({
+      status: "Success",
+      message: `Spot berhasil di-${status}`,
+    });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
@@ -183,13 +266,18 @@ const approveSpot = async (request, reply) => {
 
 //bagian spots liar
 const createWildSpot = async (request, reply) => {
-  const { 
-    nama_lokasi, kabupaten_provinsi, deskripsi_spot, 
-    latitude, longitude, status_potensi,
-    kode_wilayah, foto_carousel // Tambahkan ini agar cuaca & foto muncul
+  const {
+    nama_lokasi,
+    kabupaten_provinsi,
+    deskripsi_spot,
+    latitude,
+    longitude,
+    status_potensi,
+    kode_wilayah,
+    foto_carousel, // Tambahkan ini agar cuaca & foto muncul
   } = request.body;
-  
-  const adminId = request.user.id; 
+
+  const adminId = request.user.id;
 
   try {
     const [result] = await pool.execute(
@@ -198,15 +286,22 @@ const createWildSpot = async (request, reply) => {
         latitude, longitude, status_potensi, kode_wilayah, foto_carousel
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        adminId, nama_lokasi, kabupaten_provinsi, deskripsi_spot, 
-        latitude, longitude, status_potensi, kode_wilayah, foto_carousel
+        adminId,
+        nama_lokasi,
+        kabupaten_provinsi,
+        deskripsi_spot,
+        latitude,
+        longitude,
+        status_potensi,
+        kode_wilayah,
+        foto_carousel,
       ]
     );
 
     return reply.code(201).send({
-      status: 'Success',
-      message: 'Spot liar berhasil ditambahkan!',
-      spotId: result.insertId
+      status: "Success",
+      message: "Spot liar berhasil ditambahkan!",
+      spotId: result.insertId,
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -216,11 +311,16 @@ const createWildSpot = async (request, reply) => {
 const updateWildSpot = async (request, reply) => {
   const { id } = request.params;
   const {
-    nama_lokasi, kabupaten_provinsi, deskripsi_spot,
-    latitude, longitude, status_potensi, kode_wilayah
+    nama_lokasi,
+    kabupaten_provinsi,
+    deskripsi_spot,
+    latitude,
+    longitude,
+    status_potensi,
+    kode_wilayah,
   } = request.body;
 
-  const fotoCarousel = buildFileUrl(request, 'wildspots');
+  const fotoCarousel = buildFileUrl(request, "wildspots");
 
   let query = `
     UPDATE wild_spots SET
@@ -228,8 +328,13 @@ const updateWildSpot = async (request, reply) => {
       latitude=?, longitude=?, status_potensi=?, kode_wilayah=?
   `;
   const values = [
-    nama_lokasi, kabupaten_provinsi, deskripsi_spot,
-    latitude, longitude, status_potensi, kode_wilayah
+    nama_lokasi,
+    kabupaten_provinsi,
+    deskripsi_spot,
+    latitude,
+    longitude,
+    status_potensi,
+    kode_wilayah,
   ];
 
   if (fotoCarousel) {
@@ -242,7 +347,7 @@ const updateWildSpot = async (request, reply) => {
 
   await pool.execute(query, values);
 
-  reply.send({ status: 'Success', foto: fotoCarousel || 'tidak diubah' });
+  reply.send({ status: "Success", foto: fotoCarousel || "tidak diubah" });
 };
 
 const deleteWildSpot = async (request, reply) => {
@@ -250,21 +355,24 @@ const deleteWildSpot = async (request, reply) => {
 
   try {
     // 1. Cek apakah data spot liar tersebut ada
-    const [exist] = await pool.execute('SELECT id FROM wild_spots WHERE id = ?', [id]);
-    
+    const [exist] = await pool.execute(
+      "SELECT id FROM wild_spots WHERE id = ?",
+      [id]
+    );
+
     if (exist.length === 0) {
-      return reply.code(404).send({ 
-        status: 'Error', 
-        message: 'Spot liar tidak ditemukan!' 
+      return reply.code(404).send({
+        status: "Error",
+        message: "Spot liar tidak ditemukan!",
       });
     }
 
     // 2. Hapus data dari database
-    await pool.execute('DELETE FROM wild_spots WHERE id = ?', [id]);
+    await pool.execute("DELETE FROM wild_spots WHERE id = ?", [id]);
 
-    return reply.send({ 
-      status: 'Success', 
-      message: 'Spot liar berhasil dihapus dari sistem oleh Admin.' 
+    return reply.send({
+      status: "Success",
+      message: "Spot liar berhasil dihapus dari sistem oleh Admin.",
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -273,19 +381,27 @@ const deleteWildSpot = async (request, reply) => {
 
 const getAllMapSpots = async (request, reply) => {
   // Ambil koordinat user, radius, dan kata kunci pencarian (search)
-  const { user_lat, user_lon, radius_km = 10, search = '' } = request.query;
+  const { user_lat, user_lon, radius_km = 10, search = "" } = request.query;
 
   if (!user_lat || !user_lon) {
-    return reply.code(400).send({ message: 'Koordinat lokasi kamu diperlukan untuk melihat spot terdekat.' });
+    return reply.code(400).send({
+      message: "Koordinat lokasi kamu diperlukan untuk melihat spot terdekat.",
+    });
   }
 
   // Parameter untuk Haversine + Filter Nama (Liar & Komersial)
   // Kita tambahkan wildcard % untuk pencarian partial (LIKE)
   const searchPattern = `%${search}%`;
   const params = [
-    user_lat, user_lon, user_lat, searchPattern, // Parameter untuk blok Komersial
-    user_lat, user_lon, user_lat, searchPattern, // Parameter untuk blok Liar
-    radius_km // Filter radius terakhir
+    user_lat,
+    user_lon,
+    user_lat,
+    searchPattern, // Parameter untuk blok Komersial
+    user_lat,
+    user_lon,
+    user_lat,
+    searchPattern, // Parameter untuk blok Liar
+    radius_km, // Filter radius terakhir
   ];
 
   const query = `
@@ -309,10 +425,10 @@ const getAllMapSpots = async (request, reply) => {
   try {
     const [rows] = await pool.execute(query, params);
     return reply.send({
-      status: 'Success',
+      status: "Success",
       total_found: rows.length,
       search_keyword: search,
-      data: rows
+      data: rows,
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -324,10 +440,10 @@ const getSpotDetail = async (request, reply) => {
   const { tipe } = request.query; // 'liar' atau 'komersial'
 
   try {
-    let query = '';
-    if (tipe === 'liar') {
+    let query = "";
+    if (tipe === "liar") {
       // Mengambil data dari tabel wild_spots
-      query = 'SELECT * FROM wild_spots WHERE id = ?';
+      query = "SELECT * FROM wild_spots WHERE id = ?";
     } else {
       // Mengambil data dari tabel spots
       query = `
@@ -343,39 +459,42 @@ const getSpotDetail = async (request, reply) => {
     const [rows] = await pool.execute(query, [id]);
 
     if (rows.length === 0) {
-      return reply.code(404).send({ message: 'Detail spot tidak ditemukan' });
+      return reply.code(404).send({ message: "Detail spot tidak ditemukan" });
     }
 
     const spotData = rows[0];
 
     // --- LOGIKA CUACA JSON BMKG (LOGIKA DARI PHP BMKG) ---
     // Default info jika data tidak tersedia
-    let weatherInfo = { 
-        temp: "N/A", 
-        condition: "Pilih lokasi", 
-        humidity: "N/A", 
-        wind_speed: "N/A",
-        icon: "" 
+    let weatherInfo = {
+      temp: "N/A",
+      condition: "Pilih lokasi",
+      humidity: "N/A",
+      wind_speed: "N/A",
+      icon: "",
     };
-    
+
     // Ambil kode_wilayah (adm4) dari kolom database yang baru kamu alter
-    const adm4 = spotData.kode_wilayah; 
+    const adm4 = spotData.kode_wilayah;
 
     if (adm4) {
       try {
         // Memanggil API BMKG sesuai contoh di file PHP (adm4 parameter)
-        const response = await axios.get(`https://api.bmkg.go.id/publik/prakiraan-cuaca?adm4=${adm4}`, { timeout: 5000 });
-        
+        const response = await axios.get(
+          `https://api.bmkg.go.id/publik/prakiraan-cuaca?adm4=${adm4}`,
+          { timeout: 5000 }
+        );
+
         // Mengambil ramalan jam pertama (index 0) dari hari pertama (index 0)
-        const forecast = response.data.data[0].cuaca[0][0]; 
-        
+        const forecast = response.data.data[0].cuaca[0][0];
+
         // Memetakan parameter sesuai dokumentasi BMKG
         weatherInfo = {
-          temp: `${forecast.t}°C`,          // t = Suhu
+          temp: `${forecast.t}°C`, // t = Suhu
           condition: forecast.weather_desc, // weather_desc = Kondisi
-          humidity: `${forecast.hu}%`,      // hu = Kelembapan
-          wind_speed: `${forecast.ws} km/j`,// ws = Kecepatan Angin
-          icon: forecast.image              // Mengambil URL icon langsung
+          humidity: `${forecast.hu}%`, // hu = Kelembapan
+          wind_speed: `${forecast.ws} km/j`, // ws = Kecepatan Angin
+          icon: forecast.image, // Mengambil URL icon langsung
         };
       } catch (weatherErr) {
         console.error("Gagal mengambil data BMKG:", weatherErr.message);
@@ -383,11 +502,11 @@ const getSpotDetail = async (request, reply) => {
     }
 
     return reply.send({
-      status: 'Success',
+      status: "Success",
       data: {
         ...spotData,
-        cuaca: weatherInfo 
-      }
+        cuaca: weatherInfo,
+      },
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -395,7 +514,8 @@ const getSpotDetail = async (request, reply) => {
 };
 
 const createBooking = async (request, reply) => {
-  const { seat_id, payment_channel_id, start_time, duration, total_harga } = request.body;
+  const { seat_id, payment_channel_id, start_time, duration, total_harga } =
+    request.body;
   const userId = request.user.id;
 
   const connection = await pool.getConnection();
@@ -403,40 +523,65 @@ const createBooking = async (request, reply) => {
     await connection.beginTransaction();
 
     // 1. Ambil info kursi dan ID Owner-nya
-    const [seatInfo] = await connection.execute(`
+    const [seatInfo] = await connection.execute(
+      `
       SELECT s.status, p.owner_id 
       FROM seats s 
       JOIN spots p ON s.spot_id = p.id 
-      WHERE s.id = ? FOR UPDATE`, [seat_id]);
-    
-    if (seatInfo.length === 0 || seatInfo[0].status !== 'Available') {
+      WHERE s.id = ? FOR UPDATE`,
+      [seat_id]
+    );
+
+    if (seatInfo.length === 0 || seatInfo[0].status !== "Available") {
       await connection.rollback();
-      return reply.code(400).send({ message: 'Kursi tidak tersedia.' });
+      return reply.code(400).send({ message: "Kursi tidak tersedia." });
+    }
+
+    if (!isNumber(duration) || duration <= 0) {
+      return reply.code(400).send({ message: "Durasi tidak valid" });
     }
 
     const ownerId = seatInfo[0].owner_id;
 
     // 2. Masukkan data ke tabel bookings
-    const booking_token = 'BKG-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+    const booking_token =
+      "BKG-" + Math.random().toString(36).substr(2, 9).toUpperCase();
     await connection.execute(
-      'INSERT INTO bookings (user_id, seat_id, payment_channel_id, start_time, duration, total_harga, booking_token, status_pembayaran) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [userId, seat_id, payment_channel_id, start_time, duration, total_harga, booking_token, 'Paid'] // Langsung 'Paid'
+      "INSERT INTO bookings (user_id, seat_id, payment_channel_id, start_time, duration, total_harga, booking_token, status_pembayaran) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        userId,
+        seat_id,
+        payment_channel_id,
+        start_time,
+        duration,
+        total_harga,
+        booking_token,
+        "Paid",
+      ] // Langsung 'Paid'
     );
 
     // 3. Update status kursi jadi 'Booked'
-    await connection.execute('UPDATE seats SET status = "Booked" WHERE id = ?', [seat_id]);
+    await connection.execute(
+      'UPDATE seats SET status = "Booked" WHERE id = ?',
+      [seat_id]
+    );
 
     // 4. Update Saldo Owner (Sesuai Tabel owner_wallets)
     // Cek apakah owner sudah punya wallet, jika belum bisa dibuat otomatis (optional)
-    await connection.execute(`
+    await connection.execute(
+      `
       UPDATE owner_wallets 
       SET balance = balance + ?, total_earned = total_earned + ? 
-      WHERE owner_id = ?`, 
+      WHERE owner_id = ?`,
       [total_harga, total_harga, ownerId]
     );
 
     await connection.commit();
-    return reply.code(201).send({ status: 'Success', message: 'Booking sukses & Saldo Owner bertambah!', booking_token });
+    return reply.code(201).send({
+      status: "Success",
+      message: "Booking sukses & Saldo Owner bertambah!",
+      booking_token,
+    });
   } catch (error) {
     await connection.rollback();
     return reply.code(500).send({ error: error.message });
@@ -460,8 +605,8 @@ const getUserBookings = async (request, reply) => {
     const [rows] = await pool.execute(query, [userId]);
 
     return reply.send({
-      status: 'Success',
-      data: rows
+      status: "Success",
+      data: rows,
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -488,7 +633,7 @@ const getOwnerWallet = async (request, reply) => {
 
   try {
     const [wallet] = await pool.execute(
-      'SELECT balance, total_earned FROM owner_wallets WHERE owner_id = ?',
+      "SELECT balance, total_earned FROM owner_wallets WHERE owner_id = ?",
       [ownerId]
     );
 
@@ -497,8 +642,8 @@ const getOwnerWallet = async (request, reply) => {
     }
 
     return reply.send({
-      status: 'Success',
-      data: wallet[0]
+      status: "Success",
+      data: wallet[0],
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -515,29 +660,32 @@ const withdrawFunds = async (request, reply) => {
 
     // 1. Cek apakah saldo cukup
     const [wallet] = await connection.execute(
-      'SELECT balance FROM owner_wallets WHERE owner_id = ? FOR UPDATE',
+      "SELECT balance FROM owner_wallets WHERE owner_id = ? FOR UPDATE",
       [ownerId]
     );
 
     if (wallet.length === 0 || wallet[0].balance < amount) {
       await connection.rollback();
-      return reply.code(400).send({ message: 'Saldo tidak mencukupi.' });
+      return reply.code(400).send({ message: "Saldo tidak mencukupi." });
     }
 
     // 2. Kurangi saldo Owner
     await connection.execute(
-      'UPDATE owner_wallets SET balance = balance - ? WHERE owner_id = ?',
+      "UPDATE owner_wallets SET balance = balance - ? WHERE owner_id = ?",
       [amount, ownerId]
     );
 
     // 3. Catat ke payout_logs (status langsung Success sesuai permintaanmu)
     await connection.execute(
-      'INSERT INTO payout_logs (owner_id, amount, bank_tujuan, nomor_rekening, status) VALUES (?, ?, ?, ?, ?)',
-      [ownerId, amount, bank_tujuan, nomor_rekening, 'Success']
+      "INSERT INTO payout_logs (owner_id, amount, bank_tujuan, nomor_rekening, status) VALUES (?, ?, ?, ?, ?)",
+      [ownerId, amount, bank_tujuan, nomor_rekening, "Success"]
     );
 
     await connection.commit();
-    return reply.send({ status: 'Success', message: 'Penarikan dana berhasil diproses!' });
+    return reply.send({
+      status: "Success",
+      message: "Penarikan dana berhasil diproses!",
+    });
   } catch (error) {
     await connection.rollback();
     return reply.code(500).send({ error: error.message });
@@ -560,7 +708,7 @@ const getOwnerTransactions = async (request, reply) => {
       ORDER BY b.created_at DESC
     `;
     const [rows] = await pool.execute(query, [ownerId]);
-    return reply.send({ status: 'Success', data: rows });
+    return reply.send({ status: "Success", data: rows });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
@@ -568,23 +716,17 @@ const getOwnerTransactions = async (request, reply) => {
 
 // bagian strike feeds
 const createStrikeFeed = async (request, reply) => {
-  const { 
-    wild_spot_id, 
-    nama_ikan, 
-    berat, 
-    panjang, 
-    caption
-  } = request.body;
+  const { wild_spot_id, nama_ikan, berat, panjang, caption } = request.body;
 
   const userId = request.user.id;
 
   // ⬇️ INI DIA FOTO URL-NYA
-  const fotoUrl = buildFileUrl(request, 'feeds');
+  const fotoUrl = buildFileUrl(request, "feeds");
 
   try {
     if (!wild_spot_id || !nama_ikan || !fotoUrl) {
-      return reply.code(400).send({ 
-        message: 'Lokasi, jenis ikan, dan foto wajib diisi!' 
+      return reply.code(400).send({
+        message: "Lokasi, jenis ikan, dan foto wajib diisi!",
       });
     }
 
@@ -593,22 +735,21 @@ const createStrikeFeed = async (request, reply) => {
        (user_id, wild_spot_id, nama_ikan, berat, panjang, caption, foto_ikan) 
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
-        userId, 
-        wild_spot_id, 
-        nama_ikan, 
-        berat, 
-        panjang, 
-        caption, 
-        fotoUrl // ✅ DISIMPAN KE DB
+        userId,
+        wild_spot_id,
+        nama_ikan,
+        berat,
+        panjang,
+        caption,
+        fotoUrl, // ✅ DISIMPAN KE DB
       ]
     );
 
-    return reply.code(201).send({ 
-      status: 'Success', 
-      message: 'Strike berhasil diposting!',
-      foto: fotoUrl
+    return reply.code(201).send({
+      status: "Success",
+      message: "Strike berhasil diposting!",
+      foto: fotoUrl,
     });
-
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
@@ -624,7 +765,7 @@ const getStrikeFeeds = async (request, reply) => {
       ORDER BY f.created_at DESC
     `;
     const [rows] = await pool.execute(query);
-    return reply.send({ status: 'Success', data: rows });
+    return reply.send({ status: "Success", data: rows });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
@@ -635,28 +776,23 @@ const createReview = async (request, reply) => {
   const { spot_id, wild_spot_id, rating, ulasan } = request.body;
   const userId = request.user.id;
 
-  const fotoUlasan = buildFileUrl(request, 'reviews');
+  const fotoUlasan = buildFileUrl(request, "reviews");
 
+  if (rating < 1 || rating > 5) {
+    return reply.code(400).send({ message: "Rating harus 1 - 5" });
+  }
   await pool.execute(
     `INSERT INTO reviews
      (user_id, spot_id, wild_spot_id, rating, ulasan, foto_ulasan)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [
-      userId,
-      spot_id || null,
-      wild_spot_id || null,
-      rating,
-      ulasan,
-      fotoUlasan
-    ]
+    [userId, spot_id || null, wild_spot_id || null, rating, ulasan, fotoUlasan]
   );
 
   reply.code(201).send({
-    status: 'Success',
-    foto: fotoUlasan
+    status: "Success",
+    foto: fotoUlasan,
   });
 };
-
 
 const getSpotReviews = async (request, reply) => {
   const { spot_id, type } = request.query; // type: 'komersial' atau 'liar'
@@ -668,17 +804,17 @@ const getSpotReviews = async (request, reply) => {
       JOIN users u ON r.user_id = u.id
       WHERE 
     `;
-    
-    if (type === 'komersial') {
+
+    if (type === "komersial") {
       query += `r.spot_id = ?`;
     } else {
       query += `r.wild_spot_id = ?`;
     }
-    
+
     query += ` ORDER BY r.created_at DESC`;
 
     const [rows] = await pool.execute(query, [spot_id]);
-    return reply.send({ status: 'Success', data: rows });
+    return reply.send({ status: "Success", data: rows });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
@@ -690,8 +826,8 @@ const getLeaderboard = async (request, reply) => {
 
   try {
     // Kita urutkan berdasarkan kriteria yang dipilih user di UI
-    const orderBy = criteria === 'panjang' ? 'f.panjang' : 'f.berat';
-    
+    const orderBy = criteria === "panjang" ? "f.panjang" : "f.berat";
+
     const query = `
       SELECT 
         u.nama_lengkap, 
@@ -710,8 +846,8 @@ const getLeaderboard = async (request, reply) => {
 
     const [rows] = await pool.execute(query);
     return reply.send({
-      status: 'Success',
-      data: rows
+      status: "Success",
+      data: rows,
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -722,10 +858,13 @@ const getLeaderboard = async (request, reply) => {
 const adminDeleteStrikeFeed = async (request, reply) => {
   const { id } = request.params;
   // Pastikan request.user.role === 'Admin' (dari JWT)
-  
+
   try {
-    await pool.execute('DELETE FROM strike_feeds WHERE id = ?', [id]);
-    return reply.send({ status: 'Success', message: 'Postingan berhasil dihapus oleh Admin.' });
+    await pool.execute("DELETE FROM strike_feeds WHERE id = ?", [id]);
+    return reply.send({
+      status: "Success",
+      message: "Postingan berhasil dihapus oleh Admin.",
+    });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
@@ -734,10 +873,13 @@ const adminDeleteStrikeFeed = async (request, reply) => {
 // Admin menghapus ulasan yang tidak pantas
 const adminDeleteReview = async (request, reply) => {
   const { id } = request.params;
-  
+
   try {
-    await pool.execute('DELETE FROM reviews WHERE id = ?', [id]);
-    return reply.send({ status: 'Success', message: 'Ulasan berhasil dihapus oleh Admin.' });
+    await pool.execute("DELETE FROM reviews WHERE id = ?", [id]);
+    return reply.send({
+      status: "Success",
+      message: "Ulasan berhasil dihapus oleh Admin.",
+    });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
@@ -749,11 +891,19 @@ const registerEvent = async (request, reply) => {
   const user_id = request.user.id;
 
   try {
-    const [[event]] = await pool.execute('SELECT nama_event, maks_peserta FROM events WHERE id = ?', [event_id]);
-    const [[current]] = await pool.execute('SELECT COUNT(*) as total FROM event_registrations WHERE event_id = ?', [event_id]);
+    const [[event]] = await pool.execute(
+      "SELECT nama_event, maks_peserta FROM events WHERE id = ?",
+      [event_id]
+    );
+    const [[current]] = await pool.execute(
+      "SELECT COUNT(*) as total FROM event_registrations WHERE event_id = ?",
+      [event_id]
+    );
 
     if (current.total >= event.maks_peserta) {
-      return reply.code(400).send({ message: 'Maaf, kuota lomba sudah penuh!' });
+      return reply
+        .code(400)
+        .send({ message: "Maaf, kuota lomba sudah penuh!" });
     }
 
     const ticket_code = `EVT-${Date.now()}`;
@@ -765,11 +915,15 @@ const registerEvent = async (request, reply) => {
 
     // --- TAMBAHKAN KODE NOTIFIKASI DI SINI ---
     await pool.execute(
-      'INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)',
-      [user_id, 'Pendaftaran Berhasil', `Selamat! Kamu terdaftar di event ${event.nama_event}. Kode Tiket: ${ticket_code}`]
+      "INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)",
+      [
+        user_id,
+        "Pendaftaran Berhasil",
+        `Selamat! Kamu terdaftar di event ${event.nama_event}. Kode Tiket: ${ticket_code}`,
+      ]
     );
 
-    return reply.send({ status: 'Success', ticket_code });
+    return reply.send({ status: "Success", ticket_code });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
@@ -779,10 +933,10 @@ const registerEvent = async (request, reply) => {
 const getNotifications = async (request, reply) => {
   try {
     const [rows] = await pool.execute(
-      'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC', 
+      "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC",
       [request.user.id]
     );
-    return reply.send({ status: 'Success', data: rows });
+    return reply.send({ status: "Success", data: rows });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
@@ -792,8 +946,10 @@ const getNotifications = async (request, reply) => {
 const markNotificationRead = async (request, reply) => {
   const { id } = request.params;
   try {
-    await pool.execute('UPDATE notifications SET is_read = 1 WHERE id = ?', [id]);
-    return reply.send({ status: 'Success', message: 'Notifikasi dibaca' });
+    await pool.execute("UPDATE notifications SET is_read = 1 WHERE id = ?", [
+      id,
+    ]);
+    return reply.send({ status: "Success", message: "Notifikasi dibaca" });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
   }
@@ -802,10 +958,12 @@ const markNotificationRead = async (request, reply) => {
 // Fungsi untuk mengambil daftar fasilitas yang tersedia
 const getMasterFacilities = async (request, reply) => {
   try {
-    const [rows] = await pool.execute("SELECT id, nama_fasilitas, ikon FROM master_fasilitas");
+    const [rows] = await pool.execute(
+      "SELECT id, nama_fasilitas, ikon FROM master_fasilitas"
+    );
     return reply.send({
-      status: 'Success',
-      data: rows
+      status: "Success",
+      data: rows,
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -815,10 +973,12 @@ const getMasterFacilities = async (request, reply) => {
 // Fungsi untuk mengambil daftar ikan untuk pilihan di Strike Feed
 const getFishMaster = async (request, reply) => {
   try {
-    const [rows] = await pool.execute("SELECT * FROM fish_master ORDER BY nama_ikan ASC");
+    const [rows] = await pool.execute(
+      "SELECT * FROM fish_master ORDER BY nama_ikan ASC"
+    );
     return reply.send({
-      status: 'Success',
-      data: rows
+      status: "Success",
+      data: rows,
     });
   } catch (error) {
     return reply.code(500).send({ error: error.message });
@@ -826,9 +986,36 @@ const getFishMaster = async (request, reply) => {
 };
 
 // Update exports paling bawah
-module.exports = { getAllPonds, createPond, updatePond, deletePond, approveSpot,
-   getAdminPonds, createWildSpot, getAllMapSpots, getSpotDetail, getSpotSeats, createBooking,
-   getUserBookings, getOwnerWallet, withdrawFunds, getOwnerTransactions, createStrikeFeed, getStrikeFeeds,
-   createReview, getSpotReviews, getLeaderboard, adminDeleteStrikeFeed, adminDeleteReview, registerEvent,
-   updateExpiredBookings, getNotifications, markNotificationRead, getMasterFacilities, getFishMaster,
-   updateWildSpot, deleteWildSpot};
+module.exports = {
+  getAllPonds,
+  createPond,
+  updatePond,
+  approveSpot,
+  getAdminPonds,
+  createWildSpot,
+  getAllMapSpots,
+  getSpotDetail,
+  getSpotSeats,
+  createBooking,
+  getUserBookings,
+  getOwnerWallet,
+  withdrawFunds,
+  getOwnerTransactions,
+  createStrikeFeed,
+  getStrikeFeeds,
+  createReview,
+  getSpotReviews,
+  getLeaderboard,
+  adminDeleteStrikeFeed,
+  adminDeleteReview,
+  registerEvent,
+  updateExpiredBookings,
+  getNotifications,
+  markNotificationRead,
+  getMasterFacilities,
+  getFishMaster,
+  updateWildSpot,
+  deleteWildSpot,
+  approveDeletePond,
+  requestDeletePond,
+};

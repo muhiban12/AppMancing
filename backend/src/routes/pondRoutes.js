@@ -1,75 +1,120 @@
-const { 
-  // Import semua fungsi dari controller kamu
-  getAllMapSpots, getSpotDetail, getSpotSeats, 
-  createBooking, getUserBookings, 
+const {
+  getAllMapSpots, getSpotDetail, getSpotSeats,
+  createBooking, getUserBookings,
   registerEvent, getOwnerWallet, withdrawFunds,
   createStrikeFeed, getStrikeFeeds, getLeaderboard,
   adminDeleteStrikeFeed, adminDeleteReview,
   updateExpiredBookings, getNotifications, markNotificationRead,
   getMasterFacilities, getFishMaster, createWildSpot, updateWildSpot,
   deleteWildSpot, getSpotReviews, createReview,
-  getAdminPonds, approveSpot, getOwnerTransactions
+  getAdminPonds, approveSpot, getOwnerTransactions, createPond, 
+  updatePond, requestDeletePond, approveDeletePond 
 } = require('../controllers/pondController');
 
-const { authenticate } = require('../middleware/authMiddleware');
+const { authenticate, isOwner, isAdmin } = require('../middleware/authMiddleware');
 const upload = require('../middlewares/upload');
 
 async function pondRoutes(fastify, options) {
-  
-  // --- PETA & DETAIL (UI MAPS) ---
+
+  // ======================
+  // MAP & DETAIL (PUBLIC)
+  // ======================
   fastify.get('/map-all', getAllMapSpots);
   fastify.get('/detail/:id', getSpotDetail);
   fastify.get('/seats/:spot_id', getSpotSeats);
 
-  // --- BOOKING & EVENT (TRANSAKSI) ---
+  // ======================
+  // USER (LOGIN REQUIRED)
+  // ======================
   fastify.post('/bookings', { preHandler: [authenticate] }, createBooking);
   fastify.get('/my-bookings', { preHandler: [authenticate] }, getUserBookings);
   fastify.post('/events/register', { preHandler: [authenticate] }, registerEvent);
 
-  // --- KOMUNITAS & LEADERBOARD ---
-  fastify.get('/feeds', getStrikeFeeds);
-  fastify.post(
-    '/feeds',
-    {
-      preHandler: [
-        authenticate,
-        upload.single('foto')
-      ]
-    },
-    createStrikeFeed
-  );
-  fastify.get('/leaderboard', getLeaderboard);
-
-  // --- KEUANGAN OWNER ---
-  fastify.get('/wallet', { preHandler: [authenticate] }, getOwnerWallet);
-  fastify.post('/withdraw', { preHandler: [authenticate] }, withdrawFunds);
-  fastify.get('/owner-transactions', { preHandler: [authenticate] }, getOwnerTransactions);
-
-  // --- ADMIN & SISTEM ---
-
-  // Fitur Admin untuk Approval Spot Komersial
-  fastify.get('/admin/ponds', { preHandler: [authenticate] }, getAdminPonds);
-  fastify.patch('/admin/approve-spot/:id', { preHandler: [authenticate] }, approveSpot);
-  
-  // Route untuk bersih-bersih kursi kadaluwarsa secara manual
-  fastify.post('/system/refresh-seats', updateExpiredBookings); 
-  fastify.post('/wild-spots', { preHandler: [authenticate] }, createWildSpot);
-  fastify.put('/wild-spots/:id', { preHandler: [authenticate] }, updateWildSpot);
-  fastify.delete('/wild-spots/:id', { preHandler: [authenticate] }, deleteWildSpot); // Route Hapus
-  
-  // ulasan
-  fastify.get('/reviews', getSpotReviews); // Untuk melihat ulasan di detail spot
-  fastify.post('/reviews', { preHandler: [authenticate] }, createReview); // Untuk user kasih bintang/ulasan
-
-  // Hapus postingan/ulasan bermasalah
-  fastify.delete('/admin/feed/:id', { preHandler: [authenticate] }, adminDeleteStrikeFeed);
-  fastify.delete('/admin/review/:id', { preHandler: [authenticate] }, adminDeleteReview);
-
-  // untuk notifikasi
   fastify.get('/notifications', { preHandler: [authenticate] }, getNotifications);
   fastify.patch('/notifications/:id/read', { preHandler: [authenticate] }, markNotificationRead);
 
-  // untuk dropdown 
+  fastify.post('/reviews', { preHandler: [authenticate] }, createReview);
+  fastify.get('/reviews', getSpotReviews);
+
+  // ======================
+  // KOMUNITAS
+  // ======================
+  fastify.get('/feeds', getStrikeFeeds);
+  fastify.post(
+    '/feeds',
+    { preHandler: [authenticate, upload.single('foto')] },
+    createStrikeFeed
+  );
+
+  fastify.get('/leaderboard', getLeaderboard);
+
+  // ======================
+  // OWNER ONLY
+  // ======================
+  fastify.post(
+  '/ponds',
+  {
+    preHandler: [
+      authenticate,
+      isOwner,
+      upload.single('foto_utama')
+    ]
+  },
+  createPond
+);
+
+  fastify.put(
+  '/ponds/:id',
+  {
+    preHandler: [
+      authenticate,
+      isOwner,
+      upload.single('foto_utama')
+    ]
+  },
+  updatePond
+);
+
+  fastify.delete(
+  '/ponds/:id',
+  {
+    preHandler: [authenticate, isOwner]
+  },
+  requestDeletePond
+);
+
+
+
+fastify.get('/wallet', { preHandler: [authenticate, isOwner] }, getOwnerWallet);
+fastify.post('/withdraw', { preHandler: [authenticate, isOwner] }, withdrawFunds);
+fastify.get('/owner-transactions', { preHandler: [authenticate, isOwner] }, getOwnerTransactions);
+
+// ======================
+// ADMIN ONLY
+// ======================
+fastify.get('/admin/ponds', { preHandler: [authenticate, isAdmin] }, getAdminPonds);
+fastify.patch('/admin/approve-spot/:id', { preHandler: [authenticate, isAdmin] }, approveSpot);
+
+fastify.post('/wild-spots', { preHandler: [authenticate, isAdmin] }, createWildSpot);
+fastify.put('/wild-spots/:id', { preHandler: [authenticate, isAdmin] }, updateWildSpot);
+fastify.delete('/wild-spots/:id', { preHandler: [authenticate, isAdmin] }, deleteWildSpot);
+
+fastify.delete('/admin/feed/:id', { preHandler: [authenticate, isAdmin] }, adminDeleteStrikeFeed);
+fastify.delete('/admin/review/:id', { preHandler: [authenticate, isAdmin] }, adminDeleteReview);
+
+fastify.patch(
+  '/admin/approve-delete-pond/:id',
+  { preHandler: [authenticate, isAdmin] },
+  approveDeletePond
+);
+// ======================
+// SYSTEM
+  // ======================
+  fastify.post('/system/refresh-seats', { preHandler: [authenticate, isAdmin] }, updateExpiredBookings);
+
+  // ======================
+  // MASTER DATA
+  // ======================
   fastify.get('/master-facilities', getMasterFacilities);
   fastify.get('/master-fish', getFishMaster);
 }
