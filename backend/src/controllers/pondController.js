@@ -10,21 +10,6 @@ const buildFileUrl = (request, folder) => {
 
 const isNumber = (val) => !isNaN(val) && val !== null;
 
-const getAllPonds = async (request, reply) => {
-  try {
-    // Ubah query agar hanya mengambil yang statusnya 'approved'
-    const [rows] = await pool.execute(
-      "SELECT * FROM spots WHERE status = 'approved'"
-    );
-    return reply.send({
-      status: "Success",
-      data: rows,
-    });
-  } catch (error) {
-    return reply.code(500).send({ error: error.message });
-  }
-};
-
 const getAdminPonds = async (request, reply) => {
   try {
     const [rows] = await pool.execute("SELECT * FROM spots");
@@ -97,8 +82,8 @@ const createPond = async (request, reply) => {
       `INSERT INTO spots (
         owner_id, nama_spot, deskripsi, harga_per_jam, alamat, 
         latitude, longitude, total_kursi, jam_buka, jam_tutup, 
-        kode_wilayah, foto_utama, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+        kode_wilayah, foto_utama, status, action_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'create')`,
       [
         ownerId,
         nama_spot,
@@ -120,6 +105,15 @@ const createPond = async (request, reply) => {
         'INSERT INTO seats (spot_id, nomor_kursi, status) VALUES (?, ?, "Available")',
         [result.insertId, i]
       );
+    }
+
+    if (Array.isArray(fasilitas_ids)) {
+      for (const fid of fasilitas_ids) {
+        await connection.execute(
+          "INSERT INTO spot_facilities (spot_id, fasilitas_id) VALUES (?, ?)",
+          [result.insertId, fid]
+        );
+      }
     }
 
     await connection.commit();
@@ -182,7 +176,8 @@ const updatePond = async (request, reply) => {
     return reply.code(400).send({ message: "Tidak ada data diubah" });
   }
 
-  fields.push(`status='pending'`);
+  fields.push("status='pending'");
+  fields.push("action_type='update'");
 
   await pool.execute(`UPDATE spots SET ${fields.join(", ")} WHERE id=?`, [
     ...values,
@@ -226,42 +221,65 @@ const approveDeletePond = async (request, reply) => {
 
 // Fungsi untuk Admin mengubah status spot
 const approveSpot = async (request, reply) => {
+  const adminId = request.user.id;
   const { id } = request.params;
-  const { status } = request.body; // approved | rejected
+  const { decision } = request.body; // approved | rejected
 
-  const ALLOWED_STATUS = ["approved", "rejected"];
+  if (!["approved", "rejected"].includes(decision)) {
+    return reply.code(400).send({ message: "Decision tidak valid" });
+  }
 
-  if (!ALLOWED_STATUS.includes(status)) {
-    return reply.code(400).send({
-      status: "Error",
-      message: "Status tidak valid",
+  const [[spot]] = await pool.execute(
+    `
+    SELECT id, action_type 
+    FROM spots 
+    WHERE id = ? AND status = 'pending'
+    `,
+    [id]
+  );
+
+  if (!spot) {
+    return reply.code(404).send({
+      message: "Spot tidak ditemukan atau bukan status pending",
     });
   }
 
-  try {
-    const [check] = await pool.execute("SELECT id FROM spots WHERE id = ?", [
-      id,
-    ]);
+  let finalStatus = decision;
 
-    if (check.length === 0) {
-      return reply.code(404).send({
-        status: "Error",
-        message: "Spot tidak ditemukan",
-      });
-    }
-
-    await pool.execute(
-      'UPDATE spots SET status = ? WHERE id = ? AND status = "pending"',
-      [status, id]
-    );
-
-    return reply.send({
-      status: "Success",
-      message: `Spot berhasil di-${status}`,
-    });
-  } catch (error) {
-    return reply.code(500).send({ error: error.message });
+  // 🔥 LOGIKA UTAMA
+  if (spot.action_type === "delete") {
+    finalStatus = decision === "approved" ? "deleted" : "approved";
   }
+
+  await pool.execute(
+    `
+    UPDATE spots
+    SET 
+      status = ?,
+      approved_at = NOW(),
+      approved_by = ?
+    WHERE id = ?
+    `,
+    [finalStatus, adminId, id]
+  );
+
+  // Kirim notifikasi ke owner
+  await pool.execute(
+    `
+  INSERT INTO notifications (user_id, title, message)
+  VALUES (?, ?, ?)
+  `,
+    [
+      spot.owner_id,
+      "Status Spot Diperbarui",
+      `Spot kamu telah ${decision} oleh admin`,
+    ]
+  );
+
+  reply.send({
+    status: "Success",
+    message: `Spot berhasil di-${decision}`,
+  });
 };
 
 //bagian spots liar
@@ -514,40 +532,112 @@ const getSpotDetail = async (request, reply) => {
 };
 
 const createBooking = async (request, reply) => {
-  const { seat_id, payment_channel_id, start_time, duration, total_harga } =
-    request.body;
+  const { seat_id, payment_channel_id, start_time, duration } = request.body;
   const userId = request.user.id;
 
+  if (!seat_id || !start_time || !duration) {
+    return reply.code(400).send({ message: "Data booking tidak lengkap" });
+  }
+
+  if (isNaN(duration) || duration <= 0) {
+    return reply.code(400).send({ message: "Durasi tidak valid" });
+  }
+
   const connection = await pool.getConnection();
+
   try {
     await connection.beginTransaction();
 
-    // 1. Ambil info kursi dan ID Owner-nya
-    const [seatInfo] = await connection.execute(
+    // 1️⃣ Ambil kursi + owner + harga spot (LOCK)
+    const [seatData] = await connection.execute(
       `
-      SELECT s.status, p.owner_id 
-      FROM seats s 
-      JOIN spots p ON s.spot_id = p.id 
-      WHERE s.id = ? FOR UPDATE`,
+      SELECT 
+        s.status AS seat_status,
+        p.id AS spot_id,
+        p.owner_id,
+        p.harga_per_jam,
+        p.status AS spot_status,
+        p.jam_buka,
+        p.jam_tutup
+      FROM seats s
+      JOIN spots p ON s.spot_id = p.id
+      WHERE s.id = ?
+      FOR UPDATE
+      `,
       [seat_id]
     );
 
-    if (seatInfo.length === 0 || seatInfo[0].status !== "Available") {
+    // 2️⃣ Validasi durasi
+    if (duration > 12) {
       await connection.rollback();
-      return reply.code(400).send({ message: "Kursi tidak tersedia." });
+      return reply.code(400).send({
+        message: "Durasi maksimal booking adalah 12 jam",
+      });
     }
 
-    if (!isNumber(duration) || duration <= 0) {
-      return reply.code(400).send({ message: "Durasi tidak valid" });
+    // 3️⃣ Validasi jam operasional
+    const bookingStart = new Date(start_time);
+    const bookingHour = bookingStart.getHours();
+
+    const jamBuka = parseInt(seatData[0].jam_buka.split(":")[0]);
+    const jamTutup = parseInt(seatData[0].jam_tutup.split(":")[0]);
+
+    if (bookingHour < jamBuka || bookingHour >= jamTutup) {
+      await connection.rollback();
+      return reply.code(400).send({
+        message: "Booking di luar jam operasional spot",
+      });
     }
 
-    const ownerId = seatInfo[0].owner_id;
+    // ❌ Kursi tidak ada / tidak tersedia
+    if (seatData.length === 0 || seatData[0].seat_status !== "Available") {
+      await connection.rollback();
+      return reply.code(400).send({ message: "Kursi tidak tersedia" });
+    }
 
-    // 2. Masukkan data ke tabel bookings
+    // ❌ Spot belum disetujui admin
+    if (seatData[0].spot_status !== "approved") {
+      await connection.rollback();
+      return reply.code(403).send({
+        message: "Spot belum disetujui admin",
+      });
+    }
+
+    // 1️⃣ Cek bentrok waktu booking
+    const [overlap] = await connection.execute(
+      `
+      SELECT id FROM bookings
+      WHERE seat_id = ?
+      AND status = 'Active'
+      AND (
+        start_time < (? + INTERVAL ? HOUR)
+        AND
+        (start_time + INTERVAL duration HOUR) > ?
+      )
+      `,
+      [seat_id, start_time, duration, start_time]
+    );
+
+    if (overlap.length > 0) {
+      await connection.rollback();
+      return reply.code(409).send({
+        message: "Kursi sudah dibooking di waktu tersebut",
+      });
+    }
+
+    // 2️⃣ HITUNG TOTAL HARGA DI SERVER (WAJIB)
+    const total_harga = seatData[0].harga_per_jam * duration;
+
+    // 3️⃣ Buat booking
     const booking_token =
       "BKG-" + Math.random().toString(36).substr(2, 9).toUpperCase();
+
     await connection.execute(
-      "INSERT INTO bookings (user_id, seat_id, payment_channel_id, start_time, duration, total_harga, booking_token, status_pembayaran) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      `
+      INSERT INTO bookings
+      (user_id, seat_id, payment_channel_id, start_time, duration, total_harga, booking_token, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'Active')
+      `,
       [
         userId,
         seat_id,
@@ -556,31 +646,31 @@ const createBooking = async (request, reply) => {
         duration,
         total_harga,
         booking_token,
-        "Paid",
-      ] // Langsung 'Paid'
+      ]
     );
 
-    // 3. Update status kursi jadi 'Booked'
+    // 4️⃣ Update kursi
     await connection.execute(
-      'UPDATE seats SET status = "Booked" WHERE id = ?',
+      `UPDATE seats SET status = 'Booked' WHERE id = ?`,
       [seat_id]
     );
 
-    // 4. Update Saldo Owner (Sesuai Tabel owner_wallets)
-    // Cek apakah owner sudah punya wallet, jika belum bisa dibuat otomatis (optional)
+    // 5️⃣ Tambah saldo owner
     await connection.execute(
       `
-      UPDATE owner_wallets 
-      SET balance = balance + ?, total_earned = total_earned + ? 
-      WHERE owner_id = ?`,
-      [total_harga, total_harga, ownerId]
+      UPDATE owner_wallets
+      SET balance = balance + ?, total_earned = total_earned + ?
+      WHERE owner_id = ?
+      `,
+      [total_harga, total_harga, seatData[0].owner_id]
     );
 
     await connection.commit();
+
     return reply.code(201).send({
       status: "Success",
-      message: "Booking sukses & Saldo Owner bertambah!",
       booking_token,
+      total_harga,
     });
   } catch (error) {
     await connection.rollback();
@@ -615,17 +705,48 @@ const getUserBookings = async (request, reply) => {
 
 // Contoh logika yang dijalankan setiap beberapa menit
 const updateExpiredBookings = async () => {
-  const query = `
-    UPDATE seats 
-    SET status = 'Available' 
+  // Ambil booking yang akan selesai
+  const [finishedBookings] = await pool.execute(`
+    SELECT id, user_id FROM bookings
+    WHERE status = 'Active'
+    AND (start_time + INTERVAL duration HOUR) < NOW()
+  `);
+
+  // Balikin kursi
+  await pool.execute(`
+    UPDATE seats
+    SET status = 'Available'
     WHERE id IN (
-      SELECT seat_id FROM bookings 
-      WHERE (start_time + INTERVAL duration HOUR) < NOW() 
-      AND status_pembayaran = 'Paid'
+      SELECT seat_id FROM bookings
+      WHERE status = 'Active'
+      AND (start_time + INTERVAL duration HOUR) < NOW()
     )
-  `;
-  await pool.execute(query);
+  `);
+
+  // Update booking
+  await pool.execute(`
+    UPDATE bookings
+    SET status = 'Finished'
+    WHERE status = 'Active'
+    AND (start_time + INTERVAL duration HOUR) < NOW()
+  `);
+
+  // Kirim notifikasi ke user
+  for (const b of finishedBookings) {
+    await pool.execute(
+      `
+      INSERT INTO notifications (user_id, title, message)
+      VALUES (?, ?, ?)
+      `,
+      [
+        b.user_id,
+        "Booking Selesai",
+        "Booking kamu telah selesai. Terima kasih!"
+      ]
+    );
+  }
 };
+
 
 // keuangan
 const getOwnerWallet = async (request, reply) => {
@@ -654,41 +775,44 @@ const withdrawFunds = async (request, reply) => {
   const { amount, bank_tujuan, nomor_rekening } = request.body;
   const ownerId = request.user.id;
 
+  if (isNaN(amount) || amount <= 0) {
+    return reply.code(400).send({ message: "Jumlah tidak valid" });
+  }
+
   const connection = await pool.getConnection();
+
   try {
     await connection.beginTransaction();
 
-    // 1. Cek apakah saldo cukup
     const [wallet] = await connection.execute(
-      "SELECT balance FROM owner_wallets WHERE owner_id = ? FOR UPDATE",
+      `SELECT balance FROM owner_wallets WHERE owner_id = ? FOR UPDATE`,
       [ownerId]
     );
 
     if (wallet.length === 0 || wallet[0].balance < amount) {
       await connection.rollback();
-      return reply.code(400).send({ message: "Saldo tidak mencukupi." });
+      return reply.code(400).send({ message: "Saldo tidak mencukupi" });
     }
 
-    // 2. Kurangi saldo Owner
     await connection.execute(
-      "UPDATE owner_wallets SET balance = balance - ? WHERE owner_id = ?",
+      `UPDATE owner_wallets SET balance = balance - ? WHERE owner_id = ?`,
       [amount, ownerId]
     );
 
-    // 3. Catat ke payout_logs (status langsung Success sesuai permintaanmu)
     await connection.execute(
-      "INSERT INTO payout_logs (owner_id, amount, bank_tujuan, nomor_rekening, status) VALUES (?, ?, ?, ?, ?)",
-      [ownerId, amount, bank_tujuan, nomor_rekening, "Success"]
+      `
+      INSERT INTO payout_logs 
+      (owner_id, amount, bank_tujuan, nomor_rekening, status)
+      VALUES (?, ?, ?, ?, 'Success')
+      `,
+      [ownerId, amount, bank_tujuan, nomor_rekening]
     );
 
     await connection.commit();
-    return reply.send({
-      status: "Success",
-      message: "Penarikan dana berhasil diproses!",
-    });
-  } catch (error) {
+    return reply.send({ message: "Penarikan berhasil" });
+  } catch (err) {
     await connection.rollback();
-    return reply.code(500).send({ error: error.message });
+    return reply.code(500).send({ error: err.message });
   } finally {
     connection.release();
   }
@@ -987,7 +1111,6 @@ const getFishMaster = async (request, reply) => {
 
 // Update exports paling bawah
 module.exports = {
-  getAllPonds,
   createPond,
   updatePond,
   approveSpot,
@@ -1018,4 +1141,5 @@ module.exports = {
   deleteWildSpot,
   approveDeletePond,
   requestDeletePond,
+  isNumber,
 };
