@@ -1,0 +1,35 @@
+{
+  "name": "appmancing",
+  "version": "1.0.0",
+  "description": "repository untuk tubes mancing",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node server.js",
+    "setup-check": "node -e \"const dotenv=require('dotenv'); dotenv.config(); const mysql=require('mysql2'); const db=mysql.createConnection({host:process.env.DB_HOST, user:process.env.DB_USER, password:process.env.DB_PASS, database:process.env.DB_NAME, port:process.env.DB_PORT}); db.connect(err => {if(err){console.error('❌ Gagal:', err.message); process.exit(1)} console.log('✅ Berhasil!'); process.exit(0)})\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muhiban12/AppMancing.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/muhiban12/AppMancing/issues"
+  },
+  "homepage": "https://github.com/muhiban12/AppMancing#readme",
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/jwt": "^10.0.0",
+    "@fastify/multipart": "^9.3.0",
+    "@fastify/static": "^9.0.0",
+    "axios": "^1.13.2",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.2.3",
+    "fastify": "^5.6.2",
+    "fastify-multer": "^2.0.3",
+    "mysql2": "^3.16.0",
+    "xml2js": "^0.6.2"
+  }
+}
