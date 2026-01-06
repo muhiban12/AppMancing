@@ -1,5 +1,5 @@
 const pool = require("../config/db");
-const { buildFileUrl } = require("../helper/file.helper");
+const { buildFileUrl } = require("./helper/file.helper");
 
 /* ================= EVENT CREATION (OWNER) ================= */
 const createEvent = async (request, reply) => {

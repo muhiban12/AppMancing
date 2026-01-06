@@ -91,8 +91,6 @@ const getLeaderboard = async (request, reply) => {
   }
 };
 
-const pool = require('../config/db');
-
 const reportFeed = async (request, reply) => {
   const userId = request.user.id;
   const { id: feedId } = request.params;

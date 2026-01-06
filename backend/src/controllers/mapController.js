@@ -1,92 +1,74 @@
 const pool = require("../config/db");
-const { isNumber } = require("./helper/validation.helper");
 const axios = require("axios");
 
 /* ================= GET ALL MAP SPOTS ================= */
 const getAllMapSpots = async (request, reply) => {
-  const {
-    user_lat,
-    user_lon,
-    radius_km = 10,
-    search = "",
-    tipe = "all",
-  } = request.query;
-
-  const searchPattern = `%${search}%`;
-  let params = [];
+  const { tipe = "komersial" } = request.query;
 
   try {
-    let commercialPart = "";
-    let wildPart = "";
+    console.log("Fetching map spots with type:", tipe);
 
-    // Query Komersial (Table: spots)
-    if (tipe === "all" || tipe === "komersial") {
-      commercialPart = `
+    let query = "";
+    
+    if (tipe === "komersial" || tipe === "all") {
+      // PAKAI LOWER() untuk handle case sensitivity
+      query = `
         SELECT 
-          id, nama_spot AS nama, latitude, longitude, 'Komersial' AS tipe, 
-          foto_utama, harga_per_jam, alamat,
-          COALESCE((SELECT AVG(rating) FROM reviews WHERE spot_id = spots.id), 0) as avg_rating
-          ${
-            user_lat && user_lon
-              ? `, (6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) AS jarak`
-              : `, NULL AS jarak`
-          }
+          id, 
+          nama_spot AS nama, 
+          latitude, 
+          longitude, 
+          'Komersial' AS tipe,
+          foto_utama,
+          harga_per_jam,
+          alamat,
+          status
         FROM spots 
-        WHERE status = 'approved' 
-        ${search ? ` AND (nama_spot LIKE ? OR alamat LIKE ?)` : ""}
+        WHERE LOWER(status) = 'approved'
+        LIMIT 20
       `;
-      if (user_lat && user_lon) params.push(user_lat, user_lon, user_lat);
-      if (search) params.push(searchPattern, searchPattern);
-    }
-
-    // Query Alam Liar (Table: wild_spots)
-    if (tipe === "all" || tipe === "liar") {
-      if (commercialPart) commercialPart += " UNION ";
-      wildPart = `
+    } else if (tipe === "liar") {
+      query = `
         SELECT 
-          id, nama_lokasi AS nama, latitude, longitude, 'Alam Liar' AS tipe, 
-          foto_carousel AS foto_utama, NULL as harga_per_jam, kabupaten_provinsi as alamat,
-          COALESCE((SELECT AVG(rating) FROM reviews WHERE wild_spot_id = wild_spots.id), 0) as avg_rating
-          ${
-            user_lat && user_lon
-              ? `, (6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) AS jarak`
-              : `, NULL AS jarak`
-          }
+          id,
+          nama_lokasi AS nama,
+          latitude,
+          longitude,
+          'Alam Liar' AS tipe,
+          foto_carousel AS foto_utama,
+          NULL as harga_per_jam,
+          kabupaten_provinsi as alamat
         FROM wild_spots
-        WHERE 1=1
-        ${
-          search ? ` AND (nama_lokasi LIKE ? OR kabupaten_provinsi LIKE ?)` : ""
-        }
+        LIMIT 20
       `;
-      if (user_lat && user_lon) params.push(user_lat, user_lon, user_lat);
-      if (search) params.push(searchPattern, searchPattern);
     }
 
-    let finalQuery = `SELECT * FROM (${
-      commercialPart + wildPart
-    }) AS semua_spots`;
-    if (user_lat && user_lon) {
-      finalQuery += ` WHERE jarak <= ? ORDER BY jarak ASC`;
-      params.push(parseFloat(radius_km));
-    } else {
-      finalQuery += ` ORDER BY avg_rating DESC`;
-    }
+    console.log("Executing query:", query);
+    const [rows] = await pool.execute(query);
+    console.log("Query result rows:", rows.length);
 
-    const [rows] = await pool.execute(finalQuery, params);
+    // Parse data
+    const processedRows = rows.map(spot => ({
+      ...spot,
+      latitude: spot.latitude ? parseFloat(spot.latitude) : null,
+      longitude: spot.longitude ? parseFloat(spot.longitude) : null,
+      harga_per_jam: spot.harga_per_jam ? parseFloat(spot.harga_per_jam) : 0
+    }));
 
     return reply.send({
       status: "Success",
-      total_found: rows.length,
-      data: rows.map((spot) => ({
-        ...spot,
-        latitude: parseFloat(spot.latitude),
-        longitude: parseFloat(spot.longitude),
-        rating: parseFloat(spot.avg_rating.toFixed(1)),
-        jarak_km: spot.jarak ? parseFloat(spot.jarak.toFixed(1)) : null,
-      })),
+      total_found: processedRows.length,
+      data: processedRows
     });
+    
   } catch (error) {
-    return reply.code(500).send({ error: "Gagal mengambil data peta" });
+    console.error("❌ MAP ERROR:", error.message);
+    console.error("Error stack:", error.stack);
+    
+    return reply.code(500).send({ 
+      error: "Gagal mengambil data peta",
+      details: error.message
+    });
   }
 };
 

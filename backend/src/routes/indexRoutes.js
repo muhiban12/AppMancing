@@ -1,15 +1,16 @@
 module.exports = async function (fastify) {
   const upload = require("../middleware/upload");
-  const { authenticate, isAdmin, isAdmin } = require("../middleware/authMiddleware");
+  const { authenticate, isAdmin } = require("../middleware/authMiddleware");
 
   /* ================= AUTH ================= */
   const auth = require("../controllers/authController");
   fastify.post("/auth/register", auth.register);
   fastify.post("/auth/login", auth.login);
+  
   fastify.post('/user/upgrade-to-owner', {
-  preHandler: [fastify.authenticate],
-  handler: auth.submitOwnerUpgrade
-});
+    preHandler: authenticate,
+    handler: auth.submitOwnerUpgrade
+  });
 
   /* ================= MAP & PUBLIC ================= */
   const map = require("../controllers/mapController");
@@ -47,8 +48,7 @@ module.exports = async function (fastify) {
   fastify.get("/spots/:spot_id/preview/mini", spot.getSpotMiniPreview);
   fastify.get("/spots/:spot_id/preview/peek", spot.getSpotPeekPreview);
 
-  // Owner dashboard
-  fastify.get("/owner/spots", { preHandler: authenticate }, spot.getOwnerSpots);
+  // Owner stats
   fastify.get(
     "/owner/spots/:spot_id/stats",
     { preHandler: authenticate },
@@ -73,51 +73,39 @@ module.exports = async function (fastify) {
   /* ================= EVENTS ================= */
   const event = require("../controllers/eventController");
 
-  // Owner membuat event
   fastify.post(
     "/events",
     { preHandler: [authenticate, upload.single("poster")] },
     event.createEvent
   );
 
-  // Detail event
   fastify.get("/events/:event_id", event.getEventDetail);
-
-  // Daftar event
   fastify.get("/events", event.getApprovedEvents);
 
-  // Daftar ke event
   fastify.post(
     "/events/register",
     { preHandler: authenticate },
     event.registerEvent
   );
 
-  // Tiket user
   fastify.get(
     "/my-tickets",
     { preHandler: authenticate },
     event.getMyEventTickets
   );
 
-  // Events milik owner
   fastify.get(
     "/owner/events",
     { preHandler: authenticate },
     event.getOwnerEvents
   );
 
-  // Events per spot
-  fastify.get("/spots/:spot_id/events", event.getSpotEvents);
-
-  // Konfirmasi pembayaran
   fastify.post(
     "/events/payment/confirm",
     { preHandler: authenticate },
     event.confirmPayment
   );
 
-  // Batalkan pendaftaran
   fastify.delete(
     "/events/:event_id/register",
     { preHandler: authenticate },
@@ -128,19 +116,16 @@ module.exports = async function (fastify) {
   const social = require("../controllers/socialController");
 
   fastify.get("/feeds", social.getStrikeFeeds);
-
   fastify.post(
     "/feeds",
     { preHandler: [authenticate, upload.single("foto")] },
     social.createStrikeFeed
   );
-
   fastify.post(
     "/feeds/:id/report",
     { preHandler: authenticate },
     social.reportFeed
   );
-
   fastify.get("/leaderboard", social.getLeaderboard);
 
   /* ================= REVIEWS ================= */
@@ -151,20 +136,17 @@ module.exports = async function (fastify) {
     { preHandler: [authenticate, upload.single("foto")] },
     review.createReview
   );
-
   fastify.get("/reviews", review.getSpotReviews);
 
   /* ================= WALLET / FINANCE ================= */
   const finance = require("../controllers/financeController");
 
   fastify.get("/wallet", { preHandler: authenticate }, finance.getOwnerWallet);
-
   fastify.get(
     "/wallet/transactions",
     { preHandler: authenticate },
     finance.getOwnerTransactions
   );
-
   fastify.post(
     "/wallet/withdraw",
     { preHandler: authenticate },
@@ -184,7 +166,6 @@ module.exports = async function (fastify) {
     { preHandler: authenticate },
     notif.getNotifications
   );
-
   fastify.patch(
     "/notifications/:id/read",
     { preHandler: authenticate },
@@ -199,55 +180,46 @@ module.exports = async function (fastify) {
     { preHandler: [authenticate, isAdmin] },
     admin.getAdminPonds
   );
-
   fastify.patch(
     "/admin/ponds/:id/approve",
     { preHandler: [authenticate, isAdmin] },
     admin.approveSpot
   );
-
   fastify.patch(
     "/admin/ponds/:id/approve-delete",
     { preHandler: [authenticate, isAdmin] },
     admin.approveDeletePond
   );
-
   fastify.post(
     "/admin/wild-spots",
     { preHandler: [authenticate, isAdmin] },
     admin.createWildSpot
   );
-
   fastify.put(
     "/admin/wild-spots/:id",
     { preHandler: [authenticate, isAdmin] },
     admin.updateWildSpot
   );
-
   fastify.delete(
     "/admin/wild-spots/:id",
     { preHandler: [authenticate, isAdmin] },
     admin.deleteWildSpot
   );
-
   fastify.delete(
     "/admin/reviews/:id",
     { preHandler: [authenticate, isAdmin] },
     admin.adminDeleteReview
   );
-
   fastify.delete(
     "/admin/feeds/:id",
     { preHandler: [authenticate, isAdmin] },
     admin.adminDeleteStrikeFeed
   );
-
   fastify.get(
     "/admin/feed-reports",
     { preHandler: [authenticate, isAdmin] },
     admin.getFeedReports
   );
-
   fastify.patch(
     "/admin/feed-reports/:id",
     { preHandler: [authenticate, isAdmin] },
@@ -260,58 +232,56 @@ module.exports = async function (fastify) {
     { preHandler: [authenticate, isAdmin] },
     admin.getPendingEvents
   );
-
   fastify.get(
     "/admin/events/:event_id",
     { preHandler: [authenticate, isAdmin] },
     admin.getEventDetailForAdmin
   );
-
   fastify.patch(
     "/admin/events/:event_id/approve",
     { preHandler: [authenticate, isAdmin] },
     admin.approveEvent
   );
-
   fastify.delete(
     "/admin/events/:event_id",
     { preHandler: [authenticate, isAdmin] },
     admin.deleteEvent
   );
 
-fastify.get('/admin/owner-upgrade-requests', {
-  preHandler: [authenticate, isAdmin],
-  handler: admin.getOwnerUpgradeRequests
-});
+  fastify.get('/admin/owner-upgrade-requests', {
+    preHandler: [authenticate, isAdmin],
+    handler: admin.getOwnerUpgradeRequests
+  });
+  fastify.get('/admin/owner-upgrade-requests/:user_id', {
+    preHandler: [authenticate, isAdmin],
+    handler: admin.getOwnerUpgradeDetail
+  });
+  fastify.post('/admin/owner-upgrade-requests/:user_id/approve', {
+    preHandler: [authenticate, isAdmin],
+    handler: admin.approveOwnerUpgrade
+  });
 
-fastify.get('/admin/owner-upgrade-requests/:user_id', {
-  preHandler: [authenticate, isAdmin],
-  handler: admin.getOwnerUpgradeDetail
-});
+  /* ================= OWNER ================= */
+  const owner = require('../controllers/ownerController');
 
-fastify.post('/admin/owner-upgrade-requests/:user_id/approve', {
-  preHandler: [authenticate, isAdmin],
-  handler: admin.approveOwnerUpgrade
-});
+  // Routes untuk owner dashboard
+  fastify.get('/owner/spots', {
+    preHandler: [authenticate],
+    handler: owner.getOwnerSpots
+  });
 
-// Owner 
-// src/routes/ownerRoutes.js
-const owner = require('../controllers/ownerController');
+  fastify.get('/owner/dashboard', {
+    preHandler: [authenticate],
+    handler: owner.getOwnerDashboard
+  });
 
-// Routes untuk owner dashboard
-fastify.get('/owner/spots', {
-  preHandler: [fastify.authenticate, fastify.authorize(['Owner'])],
-  handler: owner.getOwnerSpots
-});
+  fastify.post('/owner/set-active-spot', {
+    preHandler: [authenticate],
+    handler: owner.setActiveSpot
+  });
 
-fastify.get('/owner/dashboard', {
-  preHandler: [fastify.authenticate, fastify.authorize(['Owner'])],
-  handler: getOwnerDashboard
-});
-
-fastify.post('/owner/set-active-spot', {
-  preHandler: [fastify.authenticate, fastify.authorize(['Owner'])],
-  handler: owner.setActiveSpot
-});
-
+  fastify.get('/owner/status', {
+    preHandler: [authenticate],
+    handler: owner.getOwnerStatus
+  });
 };
