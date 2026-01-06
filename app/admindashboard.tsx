@@ -20,13 +20,51 @@ export default function AdminDashboard() {
     router.back();
   };
 
-  const quickActions = [
+  type QuickAction = {
+    id: number;
+    icon: string;
+    label: string;
+    color: string;
+    onPress: () => void;
+  };
+
+  type SystemSummaryItem = {
+    id: number;
+    title: string;
+    value: string;
+    status?: string;
+    change?: string;
+    icon: string;
+    color: string;
+    changeColor: string;
+  };
+
+  type PendingOwner = {
+    id: number;
+    name: string;
+    spot: string;
+  };
+
+  type PendingEvent = {
+    id: number;
+    name: string;
+    organizer: string;
+  };
+
+  type Report = {
+    id: number;
+    title: string;
+    time: string;
+    reporter: string;
+  };
+
+  const quickActions: QuickAction[] = [
     { 
       id: 1, 
       icon: 'where-to-vote', 
       label: 'Persetujuan Spot', 
       color: '#2b9dee',
-      onPress: () => router.push('/owner-approval') // PERUBAHAN INI
+      onPress: () => router.push('/owner-approval')
     },
     { 
       id: 2, 
@@ -51,7 +89,7 @@ export default function AdminDashboard() {
     },
   ];
 
-  const systemSummary = [
+  const systemSummary: SystemSummaryItem[] = [
     { 
       id: 1, 
       title: 'Verifikasi Tertunda', 
@@ -90,17 +128,17 @@ export default function AdminDashboard() {
     },
   ];
 
-  const pendingOwners = [
+  const pendingOwners: PendingOwner[] = [
     { id: 1, name: 'Budi Santoso', spot: 'Spot: Pemancingan Jatiasih' },
     { id: 2, name: 'CV Berkah Alam', spot: 'Spot: Danau Sunter Indah' },
   ];
 
-  const pendingEvents = [
+  const pendingEvents: PendingEvent[] = [
     { id: 1, name: 'Galatama Lele Cup', organizer: 'Org: Pemancingan Jaya' },
     { id: 2, name: 'Weekend Bass Pro', organizer: 'Org: Danau Biru Club' },
   ];
 
-  const reports = [
+  const reports: Report[] = [
     { 
       id: 1, 
       title: 'Konten Tidak Pantas', 
@@ -127,8 +165,9 @@ export default function AdminDashboard() {
         
         <Text style={styles.headerTitle}>Dasbor Admin</Text>
         
-        <TouchableOpacity style={styles.notificationButton}
-          onPress={() => router.push('/notifications')} // TAMBAH INI
+        <TouchableOpacity 
+          style={styles.notificationButton}
+          onPress={() => router.push('/notifications')}
         >
           <MaterialIcons name="notifications" size={24} color="#fff" />
           <View style={styles.notificationBadge} />
@@ -234,13 +273,13 @@ export default function AdminDashboard() {
               </View>
             ))}
             
-            // Di bagian viewAllButton di dashboard:
-<TouchableOpacity 
-  style={styles.viewAllButton}
-  onPress={() => router.push('/owner-approval')}
->
-  <Text style={styles.viewAllText}>Lihat Semua Pemilik Tertunda</Text>
-</TouchableOpacity>
+            {/* Tombol Lihat Semua */}
+            <TouchableOpacity 
+              style={styles.viewAllButton}
+              onPress={() => router.push('/owner-approval')}
+            >
+              <Text style={styles.viewAllText}>Lihat Semua Pemilik Tertunda</Text>
+            </TouchableOpacity>
           </View>
         </View>
         

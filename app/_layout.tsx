@@ -61,6 +61,47 @@ export default function RootLayout() {
           options={{ headerShown: false,
           presentation: 'modal' }} 
         />
+        <Stack.Screen 
+          name="owner-dashboard" 
+          options={{ headerShown: false }} 
+        />
+        <Stack.Screen 
+        name="owner-help" 
+        options={{ headerShown: false }} 
+        />
+        <Stack.Screen 
+          name="manage-seats" 
+          options={{ headerShown: false }} 
+        />
+        <Stack.Screen 
+          name="notifications-owner" 
+          options={{ headerShown: false }} 
+        />
+        <Stack.Screen 
+          name="finance" 
+          options={{ headerShown: false }} 
+        />
+        <Stack.Screen 
+          name="withdraw" 
+          options={{ headerShown: false }} 
+        />
+        <Stack.Screen 
+          name="create-event" 
+          options={{ headerShown: false }} 
+        />
+        <Stack.Screen 
+          name="my-spot" 
+          options={{ headerShown: false }} 
+        />
+        <Stack.Screen 
+          name="add-owner-spot" 
+          options={{ headerShown: false,
+          presentation: 'modal' }} 
+        />
+        <Stack.Screen 
+          name="edit-owner-spot" 
+          options={{ headerShown: false }} 
+        />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

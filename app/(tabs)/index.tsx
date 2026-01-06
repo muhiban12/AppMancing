@@ -1,31 +1,42 @@
 import { Link } from 'expo-router';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
 
 export default function HomeScreen() {
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>🎣 Fishing App Admin</Text>
-      <Text style={styles.subtitle}>Admin Dashboard System</Text>
+      {/* Logo & Title */}
+      <View style={styles.header}>
+        <MaterialIcons name="phishing" size={48} color="#003366" />
+        <Text style={styles.title}>MancingGo</Text>
+        <Text style={styles.subtitle}>Pilih Dashboard</Text>
+      </View>
       
-      <View style={styles.buttonContainer}>
+      {/* Dashboard Options */}
+      <View style={styles.options}>
         <Link href="/admindashboard" asChild>
-          <TouchableOpacity style={styles.button}>
-            <Text style={styles.buttonText}>📊 Admin Dashboard</Text>
+          <TouchableOpacity style={styles.optionCard}>
+            <View style={[styles.iconContainer, styles.adminIcon]}>
+              <MaterialIcons name="dashboard" size={28} color="#fff" />
+            </View>
+            <Text style={styles.optionTitle}>Admin</Text>
+            <Text style={styles.optionDesc}>Kelola Sistem</Text>
           </TouchableOpacity>
         </Link>
         
-        <Link href="/event-approval" asChild>
-          <TouchableOpacity style={[styles.button, styles.eventButton]}>
-            <Text style={styles.buttonText}>🏆 Event Approval Queue</Text>
+        <Link href="/owner-spot" asChild>
+          <TouchableOpacity style={styles.optionCard}>
+            <View style={[styles.iconContainer, styles.ownerIcon]}>
+              <MaterialIcons name="storefront" size={28} color="#fff" />
+            </View>
+            <Text style={styles.optionTitle}>Owner</Text>
+            <Text style={styles.optionDesc}>Kelola Spot</Text>
           </TouchableOpacity>
         </Link>
       </View>
       
-      <View style={styles.infoBox}>
-        <Text style={styles.infoText}>
-          Use the buttons above to navigate to admin panels
-        </Text>
-      </View>
+      {/* Version */}
+      <Text style={styles.version}>v2.1.0</Text>
     </View>
   );
 }
@@ -33,57 +44,70 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#f8fafc',
+    padding: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#f6f7f8',
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: 60,
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
     color: '#003366',
-    marginBottom: 8,
-    textAlign: 'center',
+    marginTop: 16,
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
-    marginBottom: 40,
-    textAlign: 'center',
+    color: '#64748b',
+    marginTop: 8,
   },
-  buttonContainer: {
-    width: '100%',
-    maxWidth: 320,
-    gap: 16,
+  options: {
+    flexDirection: 'row',
+    gap: 24,
+    marginBottom: 60,
   },
-  button: {
-    backgroundColor: '#2b9dee',
-    paddingVertical: 18,
-    paddingHorizontal: 24,
-    borderRadius: 12,
+  optionCard: {
     alignItems: 'center',
-    width: '100%',
+    padding: 24,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    width: 140,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  eventButton: {
+  iconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  adminIcon: {
     backgroundColor: '#003366',
   },
-  buttonText: {
-    color: 'white',
-    fontSize: 18,
+  ownerIcon: {
+    backgroundColor: '#34D399',
+  },
+  optionTitle: {
+    fontSize: 20,
     fontWeight: 'bold',
+    color: '#334155',
+    marginBottom: 4,
   },
-  infoBox: {
-    marginTop: 40,
-    padding: 16,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    maxWidth: 320,
-  },
-  infoText: {
-    color: '#666',
+  optionDesc: {
     fontSize: 14,
-    textAlign: 'center',
+    color: '#64748b',
+  },
+  version: {
+    fontSize: 12,
+    color: '#94a3b8',
+    marginTop: 40,
   },
 });
