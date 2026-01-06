@@ -124,9 +124,6 @@ const reportFeed = async (request, reply) => {
   }
 };
 
-module.exports = { reportFeed };
-
-
 module.exports = {
     getStrikeFeeds,
     createStrikeFeed,

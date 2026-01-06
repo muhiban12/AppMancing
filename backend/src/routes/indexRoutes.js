@@ -91,7 +91,7 @@ module.exports = async function (fastify) {
 
   fastify.post(
     "/reviews",
-    { preHandler: authenticate },
+    { preHandler: [authenticate, upload.single("foto")] },
     review.createReview
   );
 

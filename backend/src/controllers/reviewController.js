@@ -1,24 +1,50 @@
 // reviews
 const createReview = async (request, reply) => {
-  const { spot_id, wild_spot_id, rating, ulasan } = request.body;
-  const userId = request.user.id;
+  try {
+    const { spot_id, wild_spot_id, rating, ulasan } = request.body;
+    const userId = request.user.id;
 
-  const fotoUlasan = buildFileUrl(request, "reviews");
+    /* ================= VALIDASI TARGET REVIEW ================= */
+    if ((!spot_id && !wild_spot_id) || (spot_id && wild_spot_id)) {
+      return reply.code(400).send({
+        message: "Review harus untuk spot ATAU wild spot (pilih salah satu)",
+      });
+    }
 
-  if (rating < 1 || rating > 5) {
-    return reply.code(400).send({ message: "Rating harus 1 - 5" });
+    /* ================= VALIDASI RATING ================= */
+    if (rating < 1 || rating > 5) {
+      return reply.code(400).send({ message: "Rating harus 1 - 5" });
+    }
+
+    /* ================= FOTO OPTIONAL ================= */
+    const fotoUlasan = request.file ? buildFileUrl(request, "reviews") : null;
+
+    /* ================= INSERT DB ================= */
+    await pool.execute(
+      `INSERT INTO reviews
+       (user_id, spot_id, wild_spot_id, rating, ulasan, foto_ulasan)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        spot_id || null,
+        wild_spot_id || null,
+        rating,
+        ulasan,
+        fotoUlasan,
+      ]
+    );
+
+    return reply.code(201).send({
+      status: "Success",
+      message: "Review berhasil dikirim",
+      foto: fotoUlasan,
+    });
+  } catch (error) {
+    console.error("CREATE REVIEW ERROR:", error);
+    return reply.code(500).send({
+      message: "Terjadi kesalahan saat mengirim review",
+    });
   }
-  await pool.execute(
-    `INSERT INTO reviews
-     (user_id, spot_id, wild_spot_id, rating, ulasan, foto_ulasan)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [userId, spot_id || null, wild_spot_id || null, rating, ulasan, fotoUlasan]
-  );
-
-  reply.code(201).send({
-    status: "Success",
-    foto: fotoUlasan,
-  });
 };
 
 const getSpotReviews = async (request, reply) => {
@@ -48,6 +74,6 @@ const getSpotReviews = async (request, reply) => {
 };
 
 module.exports = {
-    createReview,
-    getSpotReviews
+  createReview,
+  getSpotReviews,
 };
