@@ -1,7 +1,11 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    "baseUrl": ".",           // ← Tambah ini
+    "paths": {
+      "@/*": ["./*"]          // ← Dan ini
+    }
   },
   "include": [
     "**/*.ts",

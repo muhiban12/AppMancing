@@ -2,6 +2,9 @@ require("dotenv").config();
 const path = require("path");
 const fastify = require("fastify")({ logger: true });
 const multer = require("fastify-multer");
+const pool = require("./src/config/db");
+const __dirname = path.resolve();
+
 
 /* ================= CORE PLUGINS ================= */
 
@@ -25,7 +28,6 @@ fastify.register(require("@fastify/jwt"), {
 });
 
 /* ================= DATABASE ================= */
-const pool = require("./src/config/db");
 
 /* ================= HEALTH CHECK ================= */
 fastify.get("/cek-koneksi", async (request, reply) => {
