@@ -1,3 +1,5 @@
+const pool = require("../config/db");
+
 // Fungsi untuk mengambil daftar notifikasi milik user
 const getNotifications = async (request, reply) => {
   try {

@@ -1,3 +1,6 @@
+const pool = require("../config/db");
+const { buildFileUrl } = require("./helper/file.helper");
+
 const createStrikeFeed = async (request, reply) => {
   const { wild_spot_id, nama_ikan, berat, panjang, caption } = request.body;
 

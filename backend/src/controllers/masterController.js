@@ -1,3 +1,5 @@
+const pool = require("../config/db");
+
 // Fungsi untuk mengambil daftar fasilitas yang tersedia
 const getMasterFacilities = async (request, reply) => {
   try {

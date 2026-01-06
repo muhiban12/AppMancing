@@ -11,28 +11,44 @@ module.exports = async function (fastify) {
   const map = require("../controllers/mapController");
   fastify.get("/map-spots", map.getAllMapSpots);
   fastify.get("/spots/:id", map.getSpotDetail);
+  fastify.get("/spots/nearby", map.getNearbySpots);
+  fastify.get("/spots/:spot_id/reviews", map.getSpotReviews);
+  fastify.get("/spots/:spot_id/gallery", map.getSpotGallery);
+  fastify.get("/spots/:spot_id/events", map.getSpotEvents);
 
   /* ================= SPOT / POND ================= */
   const spot = require("../controllers/spotcontroller");
 
-  fastify.get("/spots/:id/seats", spot.getSpotSeats);
-
+  // Owner operations
   fastify.post(
     "/ponds",
     { preHandler: [authenticate, upload.single("foto")] },
     spot.createPond
   );
-
   fastify.put(
     "/ponds/:id",
     { preHandler: [authenticate, upload.single("foto")] },
     spot.updatePond
   );
-
   fastify.patch(
     "/ponds/:id/request-delete",
     { preHandler: authenticate },
     spot.requestDeletePond
+  );
+
+  // Public operations
+  fastify.get("/spots/:spot_id/seats", spot.getSpotSeats);
+  fastify.get("/spots/search", spot.searchSpots);
+  fastify.get("/spots/previews/batch", spot.getMultipleSpotPreviews);
+  fastify.get("/spots/:spot_id/preview/mini", spot.getSpotMiniPreview);
+  fastify.get("/spots/:spot_id/preview/peek", spot.getSpotPeekPreview);
+
+  // Owner dashboard
+  fastify.get("/owner/spots", { preHandler: authenticate }, spot.getOwnerSpots);
+  fastify.get(
+    "/owner/spots/:spot_id/stats",
+    { preHandler: authenticate },
+    spot.getSpotStats
   );
 
   /* ================= BOOKINGS ================= */
@@ -53,18 +69,55 @@ module.exports = async function (fastify) {
   /* ================= EVENTS ================= */
   const event = require("../controllers/eventController");
 
+  // Owner membuat event
   fastify.post(
     "/events",
     { preHandler: [authenticate, upload.single("poster")] },
     event.createEvent
   );
 
+  // Detail event
+  fastify.get("/events/:event_id", event.getEventDetail);
+
+  // Daftar event
   fastify.get("/events", event.getApprovedEvents);
 
+  // Daftar ke event
   fastify.post(
     "/events/register",
     { preHandler: authenticate },
     event.registerEvent
+  );
+
+  // Tiket user
+  fastify.get(
+    "/my-tickets",
+    { preHandler: authenticate },
+    event.getMyEventTickets
+  );
+
+  // Events milik owner
+  fastify.get(
+    "/owner/events",
+    { preHandler: authenticate },
+    event.getOwnerEvents
+  );
+
+  // Events per spot
+  fastify.get("/spots/:spot_id/events", event.getSpotEvents);
+
+  // Konfirmasi pembayaran
+  fastify.post(
+    "/events/payment/confirm",
+    { preHandler: authenticate },
+    event.confirmPayment
+  );
+
+  // Batalkan pendaftaran
+  fastify.delete(
+    "/events/:event_id/register",
+    { preHandler: authenticate },
+    event.cancelRegistration
   );
 
   /* ================= SOCIAL / FEEDS ================= */
@@ -100,11 +153,7 @@ module.exports = async function (fastify) {
   /* ================= WALLET / FINANCE ================= */
   const finance = require("../controllers/financeController");
 
-  fastify.get(
-    "/wallet",
-    { preHandler: authenticate },
-    finance.getOwnerWallet
-  );
+  fastify.get("/wallet", { preHandler: authenticate }, finance.getOwnerWallet);
 
   fastify.get(
     "/wallet/transactions",
@@ -199,5 +248,30 @@ module.exports = async function (fastify) {
     "/admin/feed-reports/:id",
     { preHandler: [authenticate, isAdmin] },
     admin.resolveFeedReport
+  );
+
+  // Event approvals
+  fastify.get(
+    "/admin/events/pending",
+    { preHandler: [authenticate, isAdmin] },
+    admin.getPendingEvents
+  );
+
+  fastify.get(
+    "/admin/events/:event_id",
+    { preHandler: [authenticate, isAdmin] },
+    admin.getEventDetailForAdmin
+  );
+
+  fastify.patch(
+    "/admin/events/:event_id/approve",
+    { preHandler: [authenticate, isAdmin] },
+    admin.approveEvent
+  );
+
+  fastify.delete(
+    "/admin/events/:event_id",
+    { preHandler: [authenticate, isAdmin] },
+    admin.deleteEvent
   );
 };

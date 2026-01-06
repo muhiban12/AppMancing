@@ -1,3 +1,5 @@
+const pool = require("../config/db");
+
 const createBooking = async (request, reply) => {
   const { seat_id, payment_channel_id, start_time, duration } = request.body;
   const userId = request.user.id;

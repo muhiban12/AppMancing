@@ -1,3 +1,6 @@
+const pool = require("../config/db");
+const { buildFileUrl } = require("./helper/file.helper");
+
 // reviews
 const createReview = async (request, reply) => {
   try {
