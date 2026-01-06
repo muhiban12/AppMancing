@@ -1,55 +1,75 @@
-require('dotenv').config();
-const path = require('path');
-const multer = require('fastify-multer');
-const fastify = require('fastify')({ logger: true });
+require("dotenv").config();
+const path = require("path");
+const fastify = require("fastify")({ logger: true });
+const multer = require("fastify-multer");
 
-// Register CORS agar bisa diakses browser/frontend nanti
-fastify.register(require('@fastify/cors'), { origin: "*" });
+/* ================= CORE PLUGINS ================= */
 
+// CORS
+fastify.register(require("@fastify/cors"), {
+  origin: "*",
+});
 
+// Multipart / Upload
 fastify.register(multer.contentParser);
 
-// untuk mekanisme uploud foto 
-fastify.register(require('@fastify/static'), {
-  root: path.join(__dirname, 'uploads'),
-  prefix: '/uploads/', // URL publik
-});
-// Daftarkan JWT (Gunakan secret dari .env)
-fastify.register(require('@fastify/jwt'), {
-  secret: process.env.JWT_SECRET || 'supersecret'
+// Static files
+fastify.register(require("@fastify/static"), {
+  root: path.join(__dirname, "uploads"),
+  prefix: "/uploads/",
 });
 
-// Panggil koneksi database
-const pool = require('./src/config/db');
+// JWT
+fastify.register(require("@fastify/jwt"), {
+  secret: process.env.JWT_SECRET || "supersecret",
+});
 
+/* ================= DATABASE ================= */
+const pool = require("./src/config/db");
 
-
-
-// API sederhana untuk cek apakah database sudah konek
-fastify.get('/cek-koneksi', async (request, reply) => {
+/* ================= HEALTH CHECK ================= */
+fastify.get("/cek-koneksi", async (request, reply) => {
   try {
-    const [rows] = await pool.query('SELECT 1 + 1 AS result');
-    return { 
-      status: "Berhasil!", 
+    const [rows] = await pool.query("SELECT 1 + 1 AS result");
+    return {
+      status: "Berhasil!",
       message: "Backend sudah nyambung ke database apps_pancingin",
-      data: rows 
+      data: rows,
     };
   } catch (err) {
-    console.error("Detail Error DB:", err);
-    return reply.status(500).send({ 
-      status: "Gagal", 
-      error: err.message 
+    return reply.code(500).send({
+      status: "Gagal",
+      error: err.message,
     });
   }
 });
-// Daftarkan Route Auth
-fastify.register(require('./src/routes/authRoutes'), { prefix: '/api/auth' });
-fastify.register(require('./src/routes/pondRoutes'), { prefix: '/api/ponds' });
 
-// Menjalankan server
+/* ================= ROUTES ================= */
+fastify.register(require("./src/routes/indexRoutes"), {
+  prefix: "/api",
+});
+
+/* ================= SYSTEM JOB ================= */
+const {
+  systemUpdateExpiredBookings,
+} = require("./src/controllers/systemController");
+
+setInterval(async () => {
+  try {
+    await systemUpdateExpiredBookings();
+    console.log("⏰ Booking expired berhasil diperbarui");
+  } catch (err) {
+    console.error("❌ Cron error:", err.message);
+  }
+}, 5 * 60 * 1000);
+
+/* ================= START SERVER ================= */
 const start = async () => {
   try {
-    await fastify.listen({ port: process.env.PORT || 3000, host: '0.0.0.0' });
+    await fastify.listen({
+      port: process.env.PORT || 3000,
+      host: "0.0.0.0",
+    });
     console.log("🚀 Server jalan di http://localhost:3000");
   } catch (err) {
     fastify.log.error(err);
@@ -57,12 +77,4 @@ const start = async () => {
   }
 };
 
-// Contoh di server.js
-const { updateExpiredBookings } = require('./src/controllers/pondController');
-
-// Jalankan pengecekan setiap 5 menit
-setInterval(async () => {
-  await updateExpiredBookings();
-  console.log('Status kursi telah diperbarui otomatis.');
-}, 5 * 60 * 1000);
 start();
