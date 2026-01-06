@@ -562,8 +562,248 @@ const getEventDetailForAdmin = async (request, reply) => {
   }
 };
 
+// ==================== OWNER UPGRADE APPROVAL ====================
 
+/**
+ * Mendapatkan daftar user yang mengajukan upgrade ke Owner
+ */
+const getOwnerUpgradeRequests = async (request, reply) => {
+  try {
+    const [rows] = await pool.execute(`
+      SELECT 
+        u.id,
+        u.nama_lengkap,
+        u.email,
+        u.nomer_wa,
+        u.provinsi_asal,
+        u.kota_kabupaten,
+        u.foto_ktp,
+        u.foto_wajah_verifikasi,
+        u.status_akun,
+        u.created_at as request_date,
+        COUNT(s.id) as total_spots_submitted
+      FROM users u
+      LEFT JOIN spots s ON u.id = s.owner_id 
+        AND s.action_type = 'create' 
+        AND s.status = 'pending'
+      LEFT JOIN user_roles ur ON u.id = ur.user_id
+      WHERE ur.role_id = 2 
+        AND u.status_akun = 'Pending'
+      GROUP BY u.id
+      ORDER BY u.created_at DESC
+    `);
 
+    // Tambahkan URL lengkap untuk foto
+    const processedRows = rows.map(user => ({
+      ...user,
+      foto_ktp_url: buildFileUrl(request, user.foto_ktp),
+      foto_wajah_url: buildFileUrl(request, user.foto_wajah_verifikasi)
+    }));
+
+    return reply.send({
+      status: "Success",
+      data: processedRows
+    });
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+/**
+ * Admin approve/reject upgrade user ke Owner
+ */
+const approveOwnerUpgrade = async (request, reply) => {
+  const adminId = request.user.id;
+  const { user_id } = request.params;
+  const { decision, rejection_reason } = request.body; // decision: 'approve' | 'reject'
+
+  if (!['approve', 'reject'].includes(decision)) {
+    return reply.code(400).send({ 
+      message: "Decision harus 'approve' atau 'reject'" 
+    });
+  }
+
+  const conn = await pool.getConnection();
+  
+  try {
+    await conn.beginTransaction();
+
+    // Cek apakah user masih pending
+    const [[user]] = await conn.execute(`
+      SELECT u.*, ur.role_id 
+      FROM users u
+      LEFT JOIN user_roles ur ON u.id = ur.user_id AND ur.role_id = 2
+      WHERE u.id = ? AND u.status_akun = 'Pending'
+    `, [user_id]);
+
+    if (!user) {
+      await conn.rollback();
+      return reply.code(404).send({ 
+        message: 'User tidak ditemukan atau sudah diproses' 
+      });
+    }
+
+    // Update status user
+    const newStatus = decision === 'approve' ? 'Verified' : 'Rejected';
+    
+    await conn.execute(
+      `UPDATE users 
+       SET status_akun = ?, 
+           verified_at = NOW()
+       WHERE id = ?`,
+      [newStatus, user_id]
+    );
+
+    // Jika approve, auto-approve juga spots pending milik user ini
+    if (decision === 'approve') {
+      await conn.execute(`
+        UPDATE spots 
+        SET status = 'approved',
+            approved_at = NOW(),
+            approved_by = ?
+        WHERE owner_id = ? 
+          AND status = 'pending' 
+          AND action_type = 'create'
+      `, [adminId, user_id]);
+
+      // Buat wallet untuk owner jika belum ada
+      const [[wallet]] = await conn.execute(
+        'SELECT * FROM owner_wallets WHERE owner_id = ?',
+        [user_id]
+      );
+
+      if (!wallet) {
+        await conn.execute(
+          'INSERT INTO owner_wallets (owner_id, balance, total_earned) VALUES (?, 0, 0)',
+          [user_id]
+        );
+      }
+    } else {
+      // Jika reject, reject juga spots pending
+      await conn.execute(`
+        UPDATE spots 
+        SET status = 'rejected'
+        WHERE owner_id = ? 
+          AND status = 'pending' 
+          AND action_type = 'create'
+      `, [user_id]);
+    }
+
+    // Kirim notifikasi ke user
+    let notificationTitle, notificationMessage;
+    
+    if (decision === 'approve') {
+      notificationTitle = 'Upgrade ke Owner Disetujui!';
+      notificationMessage = `Selamat! Akun Anda sekarang telah menjadi Owner. Anda dapat mulai mengelola spot pancing Anda.`;
+    } else {
+      notificationTitle = 'Upgrade ke Owner Ditolak';
+      notificationMessage = `Pengajuan upgrade akun Anda ke Owner ditolak.${rejection_reason ? ` Alasan: ${rejection_reason}` : ''}`;
+    }
+
+    await conn.execute(
+      `INSERT INTO notifications (user_id, title, message) 
+       VALUES (?, ?, ?)`,
+      [user_id, notificationTitle, notificationMessage]
+    );
+
+    await conn.commit();
+
+    return reply.send({
+      status: "Success",
+      message: `User berhasil di-${decision}`
+    });
+
+  } catch (error) {
+    await conn.rollback();
+    return reply.code(500).send({ error: error.message });
+  } finally {
+    conn.release();
+  }
+};
+
+/**
+ * Mendapatkan detail user yang mengajukan upgrade
+ */
+const getOwnerUpgradeDetail = async (request, reply) => {
+  const { user_id } = request.params;
+
+  try {
+    // Data user
+    const [[user]] = await pool.execute(`
+      SELECT 
+        u.*,
+        DATE_FORMAT(u.created_at, '%d %b %Y %H:%i') as formatted_request_date
+      FROM users u
+      WHERE u.id = ?
+    `, [user_id]);
+
+    if (!user) {
+      return reply.code(404).send({ 
+        message: 'User tidak ditemukan' 
+      });
+    }
+
+    // Spots yang diajukan user ini (jika ada)
+    const [spots] = await pool.execute(`
+      SELECT 
+        s.*,
+        DATE_FORMAT(s.created_at, '%d %b %Y %H:%i') as formatted_submit_date,
+        (SELECT COUNT(*) FROM spot_photos sp WHERE sp.spot_id = s.id) as total_photos,
+        (SELECT GROUP_CONCAT(nama_fasilitas) 
+         FROM master_fasilitas mf
+         JOIN spot_facilities sf ON mf.id = sf.fasilitas_id
+         WHERE sf.spot_id = s.id) as fasilitas
+      FROM spots s
+      WHERE s.owner_id = ? 
+        AND s.action_type = 'create'
+      ORDER BY s.created_at DESC
+    `, [user_id]);
+
+    // Format foto URLs
+    const processedUser = {
+      ...user,
+      foto_ktp_url: buildFileUrl(request, user.foto_ktp),
+      foto_wajah_url: buildFileUrl(request, user.foto_wajah_verifikasi),
+      foto_profil_url: buildFileUrl(request, user.foto_profil)
+    };
+
+    // Format spots dengan foto URLs
+    const processedSpots = await Promise.all(spots.map(async (spot) => {
+      // Ambil foto-foto spot
+      const [photos] = await pool.execute(
+        'SELECT * FROM spot_photos WHERE spot_id = ?',
+        [spot.id]
+      );
+
+      const photosWithUrls = photos.map(photo => ({
+        ...photo,
+        url_foto: buildFileUrl(request, photo.url_foto)
+      }));
+
+      return {
+        ...spot,
+        foto_utama_url: buildFileUrl(request, spot.foto_utama),
+        foto_denah_url: buildFileUrl(request, spot.foto_denah),
+        photos: photosWithUrls,
+        fasilitas: spot.fasilitas ? spot.fasilitas.split(',') : []
+      };
+    }));
+
+    return reply.send({
+      status: "Success",
+      data: {
+        user: processedUser,
+        spots: processedSpots,
+        total_spots: spots.length
+      }
+    });
+
+  } catch (error) {
+    return reply.code(500).send({ error: error.message });
+  }
+};
+
+// ==================== UPDATE EXPORTS ===================
 module.exports = {
     getAdminPonds,
     approveDeletePond,
@@ -578,5 +818,8 @@ module.exports = {
     getPendingEvents,
     approveEvent,
     deleteEvent,
-    getEventDetailForAdmin
+    getEventDetailForAdmin,
+    getOwnerUpgradeDetail,
+    getOwnerUpgradeRequests,
+    approveOwnerUpgrade
 };

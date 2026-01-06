@@ -1,11 +1,15 @@
 module.exports = async function (fastify) {
   const upload = require("../middleware/upload");
-  const { authenticate, isAdmin } = require("../middleware/authMiddleware");
+  const { authenticate, isAdmin, isAdmin } = require("../middleware/authMiddleware");
 
   /* ================= AUTH ================= */
   const auth = require("../controllers/authController");
   fastify.post("/auth/register", auth.register);
   fastify.post("/auth/login", auth.login);
+  fastify.post('/user/upgrade-to-owner', {
+  preHandler: [fastify.authenticate],
+  handler: auth.submitOwnerUpgrade
+});
 
   /* ================= MAP & PUBLIC ================= */
   const map = require("../controllers/mapController");
@@ -274,4 +278,40 @@ module.exports = async function (fastify) {
     { preHandler: [authenticate, isAdmin] },
     admin.deleteEvent
   );
+
+fastify.get('/admin/owner-upgrade-requests', {
+  preHandler: [authenticate, isAdmin],
+  handler: admin.getOwnerUpgradeRequests
+});
+
+fastify.get('/admin/owner-upgrade-requests/:user_id', {
+  preHandler: [authenticate, isAdmin],
+  handler: admin.getOwnerUpgradeDetail
+});
+
+fastify.post('/admin/owner-upgrade-requests/:user_id/approve', {
+  preHandler: [authenticate, isAdmin],
+  handler: admin.approveOwnerUpgrade
+});
+
+// Owner 
+// src/routes/ownerRoutes.js
+const owner = require('../controllers/ownerController');
+
+// Routes untuk owner dashboard
+fastify.get('/owner/spots', {
+  preHandler: [fastify.authenticate, fastify.authorize(['Owner'])],
+  handler: owner.getOwnerSpots
+});
+
+fastify.get('/owner/dashboard', {
+  preHandler: [fastify.authenticate, fastify.authorize(['Owner'])],
+  handler: getOwnerDashboard
+});
+
+fastify.post('/owner/set-active-spot', {
+  preHandler: [fastify.authenticate, fastify.authorize(['Owner'])],
+  handler: owner.setActiveSpot
+});
+
 };
