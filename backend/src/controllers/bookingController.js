@@ -48,6 +48,13 @@ const createBooking = async (request, reply) => {
     const bookingStart = new Date(start_time);
     const bookingHour = bookingStart.getHours();
 
+    if (seatData.length === 0) {
+      await connection.rollback();
+      return reply.code(404).send({
+        message: "Kursi tidak ditemukan",
+      });
+    }
+
     const jamBuka = parseInt(seatData[0].jam_buka.split(":")[0]);
     const jamTutup = parseInt(seatData[0].jam_tutup.split(":")[0]);
 
@@ -59,7 +66,7 @@ const createBooking = async (request, reply) => {
     }
 
     // ❌ Kursi tidak ada / tidak tersedia
-    if (seatData.length === 0 || seatData[0].seat_status !== "Available") {
+    if (seatData[0].seat_status !== "Available") {
       await connection.rollback();
       return reply.code(400).send({ message: "Kursi tidak tersedia" });
     }
@@ -217,7 +224,7 @@ const updateExpiredBookings = async () => {
 };
 
 module.exports = {
-    createBooking,
-    getUserBookings,
-    updateExpiredBookings
+  createBooking,
+  getUserBookings,
+  updateExpiredBookings,
 };
