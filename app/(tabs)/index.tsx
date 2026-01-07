@@ -1,3 +1,12 @@
+<<<<<<< HEAD
+// app/index.tsx
+import React from 'react';
+import SplashScreen from '../splash'; // pastikan file ini ada di app/splashscreen.tsx
+
+export default function Index() {
+  return <SplashScreen />;
+}
+=======
 import { Link } from 'expo-router';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -111,3 +120,4 @@ const styles = StyleSheet.create({
     marginTop: 40,
   },
 });
+>>>>>>> 6bcd6deecd930aef6d03550407b8aac774cb4468

@@ -3,7 +3,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
-import { useColorScheme } from '../hooks/use-color-scheme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -18,7 +18,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         {/* Tambahkan ini */}
-        <Stack.Screen 
+        {/* <Stack.Screen 
           name="admindashboard" 
           options={{ headerShown: false }} 
         />
@@ -101,7 +101,7 @@ export default function RootLayout() {
         <Stack.Screen 
           name="edit-owner-spot" 
           options={{ headerShown: false }} 
-        />
+        /> */}
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
